@@ -6,16 +6,18 @@ class multisearch
 {
 	# Specify available arguments as defaults or as NULL (to represent a required argument)
 	var $defaults = array (
-		'databaseConnection'	=> NULL,
-		'baseUrl'				=> NULL,
-		'database'				=> NULL,
-		'table'					=> NULL,
-		'description'			=> 'catalogue',	// As in, "search the %description"
-		'keyField'				=> 'id',
-		'mainSubjectField'		=> NULL,
-		'excludeFields'			=> array (),	// Fields should not appear in the search form
-		'showFields'			=> NULL,
-		'recordLink'			=> NULL,
+		'databaseConnection'		=> NULL,
+		'baseUrl'					=> NULL,
+		'database'					=> NULL,
+		'table'						=> NULL,
+		'description'				=> 'catalogue',	// As in, "search the %description"
+		'keyField'					=> 'id',
+		'mainSubjectField'			=> NULL,
+		'excludeFields'				=> array (),	// Fields should not appear in the search form
+		'showFields'				=> NULL,
+		'recordLink'				=> NULL,
+		'paginationRecordsPerPage'	=> 50,
+		// 'queryArgSeparator'		=> ',',
 	);
 	
 	
@@ -59,6 +61,14 @@ class multisearch
 		
 		# Get the database fields
 		$fields = $this->databaseConnection->getFields ($this->settings['database'], $this->settings['table'], $addSimpleType = true);
+		
+		/* This area is difficult to make work in practice
+		# Emulate $_GET for the query string section
+		if (isSet ($_GET['query']) && strlen ($_GET['query'])) {
+			parse_str ($_GET['query'], $get);	// Takes account of arg_separator.output but that has to be set at INI_PERDIR
+			unset ($_GET['query']);
+		}
+		*/
 		
 		# If there is a set of GET data (which is not checked for matching fields, as they could change over time), do the search; otherwise show the form
 		$get = $_GET;
@@ -123,13 +133,22 @@ class multisearch
 		if ($result = $form->process ($html)) {
 			
 			# Redirect so that the search parameters can be persistent
-			$url = $_SERVER['_SITE_URL'] . $this->baseUrl . '?' . http_build_query ($result);
+			$url = $this->queryToUrl ($result);
 			application::sendHeader (302, $url);
 			return false;
 		}
 		
 		# Return the HTML
 		return $html;
+	}
+	
+	
+	# Helper function to convert a search query to a persistent URL
+	private function queryToUrl ($result)
+	{
+		//ini_set ('arg_separator.output', $this->settings['queryArgSeparator']);
+		//return $url = $_SERVER['_SITE_URL'] . $this->baseUrl . http_build_query ($result) . '/';
+		return $url = $_SERVER['_SITE_URL'] . $this->baseUrl . '?' . http_build_query ($result);
 	}
 	
 	
@@ -183,7 +202,7 @@ class multisearch
 			}
 			
 			# Redirect so that the search parameters can be persistent
-			$url = $_SERVER['_SITE_URL'] . $this->baseUrl . '?' . http_build_query ($result);
+			$url = $this->queryToUrl ($result);
 			application::sendHeader (302, $url);
 			return false;
 		}
@@ -191,6 +210,41 @@ class multisearch
 		# Return the HTML
 		return $html;
 	}
+	
+	
+	# Function to do getData via pagination
+	private function getDataViaPagination ($query, $associative = false, $keyed = true, $preparedStatementValues = array (), $paginationRecordsPerPage)
+	{
+		# Prepare the counting query
+		$placeholders = array (
+			'/^SELECT (?! FROM ).+ FROM/' => 'SELECT COUNT(*) AS total FROM',
+			'/;$/' => ';',
+		);
+		$queryCount = preg_replace (array_keys ($placeholders), array_values ($placeholders), $query);
+		
+		# Perform a count first; use a negative look-around to match the section between SELECT ... FROM - see http://stackoverflow.com/questions/406230
+		$dataCount = $this->databaseConnection->getOne ($queryCount);
+		$total = $dataCount['total'];
+		
+		# Get the requested page and calculate the pagination
+		require_once ('application.php');
+		$requestedPage = ((isSet ($_GET['page']) && ctype_digit ($_GET['page'])) ? $_GET['page'] : 1);
+		list ($totalPages, $offset, $items, $limit, $page) = application::getPagerData ($total, $paginationRecordsPerPage, $requestedPage);
+		
+		# Now construct the main query
+		$placeholders = array (
+			'/^SELECT (?! FROM ).+ FROM/' => 'SELECT * FROM',
+			'/;$/' => " LIMIT {$offset}, {$limit};",
+		);
+		$queryData = preg_replace (array_keys ($placeholders), array_values ($placeholders), $query);
+		
+		# Get the data
+		$data = $this->databaseConnection->getData ($queryData, $associative, $keyed, $preparedStatementValues);
+		
+		# Return the data and the total
+		return array ($data, $total);
+	}
+	
 	
 	
 	# Function to do the search
@@ -211,22 +265,19 @@ class multisearch
 			$searchClausesSql = implode (' AND ', $searchClauses);
 		}
 		
-		# Get the data
-		$limit = 100;
-		$limitPlusOne = $limit + 1;
-		$query = "SELECT * FROM {$this->settings['database']}.{$this->settings['table']} WHERE " . $searchClausesSql . " ORDER BY natsort LIMIT {$limitPlusOne};";
-		$data = $this->databaseConnection->getData ($query);
+		# Construct the query
+		$query = "SELECT * FROM {$this->settings['database']}.{$this->settings['table']} WHERE " . $searchClausesSql . " ORDER BY natsort;";
+//		$data = $this->databaseConnection->getDataViaPagination ($queryData);
+		list ($data, $totalAvailable) = $this->getDataViaPagination ($query, false, true, array (), $this->settings['paginationRecordsPerPage']);
 		
 		# End if no results
 		if (!$data) {
-			$html .= "\n<p>No results were found.</p>";
+			$html .= "\n<p>No items were found.</p>";
 		} else {
 			
-			# If the result is as great as the limit+1, then truncate to the limit and warn the user
-			if (count ($data) > $limit) {
-				$html .= "\n<p>There were <strong>more than {$limit} results</strong>:</p>";
-				unset ($data[$limit]);	// i.e. the last item, indexed from 0
-			}
+			# Show the count
+			$total = count ($data);
+			$html .= "\n<p>There " . ($totalAvailable == 1 ? 'is one item' : "are {$totalAvailable} items") . '.' . ($totalAvailable == $total ? '' : ($total == 1 ? ' One is shown.' : " {$total} are shown.")) . '</p>';
 			
 			# Create a table of items
 			foreach ($data as $index => $record) {
