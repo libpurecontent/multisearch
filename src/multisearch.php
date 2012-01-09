@@ -6,18 +6,22 @@ class multisearch
 {
 	# Specify available arguments as defaults or as NULL (to represent a required argument)
 	var $defaults = array (
-		'databaseConnection'		=> NULL,
-		'baseUrl'					=> NULL,
-		'database'					=> NULL,
-		'table'						=> NULL,
-		'description'				=> 'catalogue',	// As in, "search the %description"
-		'keyField'					=> 'id',
-		'mainSubjectField'			=> NULL,
-		'excludeFields'				=> array (),	// Fields should not appear in the search form
-		'showFields'				=> NULL,
-		'recordLink'				=> NULL,
-		'paginationRecordsPerPage'	=> 50,
-		// 'queryArgSeparator'		=> ',',
+		'databaseConnection'			=> NULL,
+		'baseUrl'						=> NULL,
+		'database'						=> NULL,
+		'table'							=> NULL,
+		'description'					=> 'catalogue',	// As in, "search the %description"
+		'keyField'						=> 'id',
+		'mainSubjectField'				=> NULL,
+		'excludeFields'					=> array (),	// Fields should not appear in the search form
+		'showFields'					=> NULL,
+		'recordLink'					=> NULL,
+		'paginationRecordsPerPage'		=> 50,
+		'geographicSearchEnabled'		=> false,		// Enables GeoJSON binding - specify the fieldname in POST, or false to disable
+		'geographicSearchMapUrl'		=> '/',
+		'geographicSearchField'			=> 'geometry',	// Spatial database field for location search
+		'geographicSearchTrueWithin'	=> FALSE,	// If the trueWithin function is available in SQL
+		// 'queryArgSeparator'			=> ',',
 	);
 	
 	
@@ -41,7 +45,6 @@ class multisearch
 		
 		# Run the main function
 		$this->main ();
-		
 	}
 	
 	
@@ -87,12 +90,22 @@ class multisearch
 	# Search form wrapper function
 	private function searchForm ($fields, $data = array (), $simpleHasAutofocus = true)
 	{
-		# Create the two forms, ending if false (indicating a redirect) is returned
-		if (!$searchFormSimple   = $this->searchFormSimple   ($fields, $data, $simpleHasAutofocus)) {return false;}
-		if (!$searchFormAdvanced = $this->searchFormAdvanced ($fields, $data, !$simpleHasAutofocus)) {return false;}
+		# Add the simple form, ending if false (indicating a redirect) is returned
+		if (!$searchFormSimple		= $this->searchFormSimple ($fields, $data, $simpleHasAutofocus)) {return false;}
+		
+		# Add GeoJSON support if required
+		if ($this->settings['geographicSearchEnabled']) {
+			if (!$searchFormByLocation		= $this->searchFormByLocation ()) {return false;}
+		} else {
+			$searchFormByLocation = false;
+		}
+		
+		# Add the advanced form
+		if (!$searchFormAdvanced	= $this->searchFormAdvanced ($fields, $data, !$simpleHasAutofocus)) {return false;}
 		
 		# Compile the HTML
 		$html  = $searchFormSimple;
+		$html .= $searchFormByLocation;
 		$html .= $searchFormAdvanced;
 		
 		# Return the HTML
@@ -149,6 +162,60 @@ class multisearch
 		//ini_set ('arg_separator.output', $this->settings['queryArgSeparator']);
 		//return $url = $_SERVER['_SITE_URL'] . $this->baseUrl . http_build_query ($result) . '/';
 		return $url = $_SERVER['_SITE_URL'] . $this->baseUrl . '?' . http_build_query ($result);
+	}
+	
+	
+	# Function to provide a search form that handles GeoJSON format
+	private function searchFormByLocation ()
+	{
+		# Retrieve the data if submitted
+		$fieldname = $this->settings['geographicSearchEnabled'];
+		if (isSet ($_POST[$fieldname])) {
+			
+			# Decode the JSON to an array
+			$jsonArray = json_decode ($_POST[$fieldname], true);
+			
+			# Check the structure, that it is a Polygon, and retrieve the co-ordinates portion only
+			$coordinatesSet = false;
+			if ($jsonArray) {
+				if (isSet ($jsonArray['geometry'])) {
+					if (isSet ($jsonArray['geometry']['type'])) {
+						if ($jsonArray['geometry']['type'] == 'Polygon') {	// Currently support only Polygon type
+							if (isSet ($jsonArray['geometry']['coordinates'])) {
+								if (isSet ($jsonArray['geometry']['coordinates'][0])) {
+									if (is_array ($jsonArray['geometry']['coordinates'][0])) {
+										$coordinatesSet = $jsonArray['geometry']['coordinates'][0];
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+			
+			# If there co-ordinates, convert back to JSON and use in the query
+			if ($coordinatesSet) {
+				
+				# Encode as lon1,lat1|lon2,lat2|...
+				$coordinatesJson = json_encode ($coordinatesSet);	// e.g. a string like [[3.0009179687488,53.540743120766],[2.8141503906209,52.743387092624],[2.0670800781271,52.616835414769]]
+				
+				# Convert an associative result
+				$databaseField = $this->settings['geographicSearchField'];
+				$result = array ($databaseField => $coordinatesJson);
+				
+				# Redirect so that the search parameters can be persistent
+				$url = $this->queryToUrl ($result);
+				application::sendHeader (302, $url);
+				return false;
+			}
+		}
+		
+		# Construct the HTML
+		$html  = "\n<h2>Search by location</h2>";
+		$html .= "\n" . sprintf ('<p>You can <a href="%s">search for items in an area</a> using the map controls.</p>', $this->settings['geographicSearchMapUrl']);
+		
+		# Return the HTML
+		return $html;
 	}
 	
 	
@@ -256,6 +323,10 @@ class multisearch
 		# Determine if this is a simple search (i.e. an array as strictly array('search'=>value), compile the search phrases
 		$isSimpleSearch = ($result && (count ($result) == 1) && (isSet ($result['search'])));
 		
+		# Determine if this is a geographic search
+		$geographicSearchField = $this->settings['geographicSearchField'];
+		$isGeographicSearch = ($result && (count ($result) == 1) && (isSet ($result[$geographicSearchField])));
+		
 		# Get the search clauses
 		if ($isSimpleSearch) {
 			$searchClauses = $this->searchClausesSimple ($result, $fields);
@@ -267,7 +338,6 @@ class multisearch
 		
 		# Construct the query
 		$query = "SELECT * FROM {$this->settings['database']}.{$this->settings['table']} WHERE " . $searchClausesSql . " ORDER BY natsort;";
-//		$data = $this->databaseConnection->getDataViaPagination ($queryData);
 		list ($data, $totalAvailable) = $this->getDataViaPagination ($query, false, true, array (), $this->settings['paginationRecordsPerPage']);
 		
 		# End if no results
@@ -301,6 +371,7 @@ class multisearch
 			foreach ($data as $index => $record) {
 				$recordLink = $this->settings['recordLink'];
 				foreach ($record as $key => $value) {
+					$recordLink = str_replace ("%lower({$key})", urlencode (strtolower ($value)), $recordLink);
 					$recordLink = str_replace ("%{$key}", urlencode ($value), $recordLink);
 				}
 				$recordLink = htmlspecialchars ($recordLink);
@@ -321,7 +392,11 @@ class multisearch
 			</script>
 			<style type="text/css">#searchform {display: none;}</style>
 		';
-		$html .= "\n" . '<p><a id="showform" name="showform">Refine this search</a> if you wish.</p>';
+		if ($isGeographicSearch) {
+			$html .= "\n" . sprintf ('<p><a href="%s">Define a different map area</a> if you wish, or try a <a href="' . $this->baseUrl . '">text search</a>.</p>', $this->settings['geographicSearchMapUrl']);
+		} else {
+			$html .= "\n" . '<p><a id="showform" name="showform">Refine this search</a> if you wish.</p>';
+		}
 		$html .= "\n" . '<div id="searchform">';
 		$html .= $this->searchForm ($fields, $result, $isSimpleSearch);
 		$html .= "\n" . '</div>';
@@ -401,11 +476,47 @@ class multisearch
 				case 'list':
 					$searchClauses[$key] = "{$key} = " . $this->databaseConnection->quote ($value);
 					break;
+					
+				case 'point':
+					if ($geom = $this->jsonPolygonToGeom ($value)) {
+						if ($this->settings['geographicSearchTrueWithin']) {
+							$searchClauses[$key] = "trueWithin({$key}, " . $geom . ')';	// See trueWithin in within.sql from CycleStreets codebase
+						} else {
+							$searchClauses[$key] = "MBRContains(" . $geom . ", {$key})";	// See http://dev.mysql.com/doc/refman/4.1/en/relations-on-geometry-mbr.html
+						}
+					} else {
+						$searchClauses[$key] = '1=0';	// Simple way of ensuring the query fails if the Geom string is invalid
+					}
+					break;
 			}
 		}
 		
 		# Return the search clauses
 		return $searchClauses;
+	}
+	
+	
+	# Helper function to convert a GeoJSON string to a Geom string
+	private function jsonPolygonToGeom ($value)
+	{
+		# Decode
+		$coordinatesSet = json_decode ($value);
+		
+		# Convert the associative array to Geom format, e.g. Polygon((0 0,90 0,0 90,90 90))
+		$coordinateGroups = array ();
+		foreach ($coordinatesSet as $coordinates) {
+			$coordinateGroups[] = implode (' ', $coordinates);
+		}
+		$coordinatesString = implode (',', $coordinateGroups);
+		
+		# Ensure the string contains only valid characters, to thwart SQL injection attacks
+		if (!preg_match ('/^([- .,0-9]+)$/', $coordinatesString)) {return false;}
+		
+		# Compile the Geom string
+		$geomString = "GeomFromText('Polygon((" . $coordinatesString . "))')";
+		
+		# Return the string
+		return $geomString;
 	}
 	
 	
