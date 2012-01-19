@@ -6,22 +6,30 @@ class multisearch
 {
 	# Specify available arguments as defaults or as NULL (to represent a required argument)
 	var $defaults = array (
-		'databaseConnection'			=> NULL,
-		'baseUrl'						=> NULL,
-		'database'						=> NULL,
-		'table'							=> NULL,
-		'description'					=> 'catalogue',	// As in, "search the %description"
-		'keyField'						=> 'id',
-		'mainSubjectField'				=> NULL,
-		'excludeFields'					=> array (),	// Fields should not appear in the search form
-		'showFields'					=> NULL,
-		'recordLink'					=> NULL,
-		'paginationRecordsPerPage'		=> 50,
-		'geographicSearchEnabled'		=> false,		// Enables GeoJSON binding - specify the fieldname in POST, or false to disable
-		'geographicSearchMapUrl'		=> '/',
-		'geographicSearchField'			=> 'geometry',	// Spatial database field for location search
-		'geographicSearchTrueWithin'	=> FALSE,	// If the trueWithin function is available in SQL
-		// 'queryArgSeparator'			=> ',',
+		'databaseConnection'				=> NULL,
+		'baseUrl'							=> NULL,
+		'database'							=> NULL,
+		'table'								=> NULL,
+		'description'						=> 'catalogue',	// As in, "search the %description"
+		'keyField'							=> 'id',
+		'orderBy'							=> 'id',
+		'enableSimpleSearch'				=> true,
+		'mainSubjectField'					=> NULL,
+		'excludeFields'						=> array (),	// Fields should not appear in the search form or the search results table
+		'showFields'						=> NULL,
+		'recordLink'						=> NULL,
+		'paginationRecordsPerPage'			=> 50,
+		'enumRadiobuttons'					=> 1,
+		'enumRadiobuttonsInitialNullText'	=> array (),	// e.g. array ('foo' => 'Either') which would put "Either" as the empty enum text at the start of widget 'foo'
+		'searchResultsMaximumLimit'			=> false,
+		'geographicSearchEnabled'			=> false,		// Enables GeoJSON binding - specify the fieldname in POST, or false to disable
+		'geographicSearchMapUrl'			=> '/',
+		'geographicSearchField'				=> 'geometry',	// Spatial database field for location search
+		'geographicSearchTrueWithin'		=> true,	// If the trueWithin function is available in SQL
+		// 'queryArgSeparator'				=> ',',
+		'exportingEnabled'					=> true,	// Whether CSV export is enabled
+		'exportingFieldLabels'				=> false,	// Whether to use field labels if available rather than the field names when exporting
+		'codings'							=> false,	// Codings (lookups of data in the table)
 	);
 	
 	
@@ -34,6 +42,11 @@ class multisearch
 	# Search functionality
 	public function __construct ($settings)
 	{
+		# Load required libraries
+		require_once ('application.php');
+		require_once ('database.php');
+		require_once ('ultimateForm.php');
+		
 		# Merge in the arguments; note that $errors returns the errors by reference and not as a result from the method
 		if (!$this->settings = application::assignArguments ($errors, $settings, $this->defaults, __CLASS__, NULL, $handleErrors = true)) {
 			return false;
@@ -77,13 +90,18 @@ class multisearch
 		$get = $_GET;
 		unset ($get['action']);
 		if ($get) {
-			$html .= $this->searchResult ($get, $fields);
+			$result = $this->searchResult ($get, $fields);
+			if ($result === true) {		// i.e. export format
+				return true;
+			} else {
+				$html .= $result;
+			}
 		} else {
 			$html .= $this->searchForm ($fields);
 		}
 		
-		# Show the HTML
-		echo $html;
+		# Register the HTML
+		$this->html = $html;
 	}
 	
 	
@@ -91,7 +109,10 @@ class multisearch
 	private function searchForm ($fields, $data = array (), $simpleHasAutofocus = true)
 	{
 		# Add the simple form, ending if false (indicating a redirect) is returned
-		if (!$searchFormSimple		= $this->searchFormSimple ($fields, $data, $simpleHasAutofocus)) {return false;}
+		$searchFormSimple = '';
+		if ($this->settings['enableSimpleSearch']) {
+			if (!$searchFormSimple		= $this->searchFormSimple ($fields, $data, $simpleHasAutofocus)) {return false;}
+		}
 		
 		# Add GeoJSON support if required
 		if ($this->settings['geographicSearchEnabled']) {
@@ -225,7 +246,7 @@ class multisearch
 		# Start the HTML
 		$html  = "\n<h2>Advanced search</h2>";
 		$html .= "\n<p>Here you can add search terms for parts of the {$this->settings['description']} data.</p>";
-		$html .= "\n<p>To search for partial names, use * for the part of a word you don't know. For instance, an ID search for <em>70h*</em> would find items beginning with '70h'.</p>";
+		$html .= "\n<p>For partial names, use * for the part of a word/term you don't know. For instance, an ID search for <em>70h*</em> would find items beginning with '70h'.</p>";
 		
 		# Create the search form
 		$form = new form (array (
@@ -235,12 +256,23 @@ class multisearch
 			'name' => false,
 			// 'submitButtonPosition' => 'both',
 			'submitTo' => $this->baseUrl,
+			'nullText' => false,
 		));
 		
 		# Define the dataBinding attributes
 		$dataBindingAttributes = array (
 			$this->settings['keyField'] => array ('autofocus' => $hasAutofocus, ),
 		);
+		
+		# Swap in codings if supplied, by converting these to select widgets
+		if ($this->settings['codings']) {
+			foreach ($this->settings['codings'] as $field => $values) {
+				$dataBindingAttributes[$field] = array (
+					'type' => 'select',
+					'values' => $values,
+				);
+			}
+		}
 		
 		# Prevent required fields
 		foreach ($fields as $fieldname => $field) {
@@ -255,6 +287,8 @@ class multisearch
 			'table' => $this->settings['table'],
 			'exclude' => $this->settings['excludeFields'],
 			'attributes' => $dataBindingAttributes,
+			'enumRadiobuttons' => $this->settings['enumRadiobuttons'],
+			'enumRadiobuttonsInitialNullText' => $this->settings['enumRadiobuttonsInitialNullText'],
 			'data' => $data,
 		));
 		
@@ -279,46 +313,25 @@ class multisearch
 	}
 	
 	
-	# Function to do getData via pagination
-	private function getDataViaPagination ($query, $associative = false, $keyed = true, $preparedStatementValues = array (), $paginationRecordsPerPage)
-	{
-		# Prepare the counting query
-		$placeholders = array (
-			'/^SELECT (?! FROM ).+ FROM/' => 'SELECT COUNT(*) AS total FROM',
-			'/;$/' => ';',
-		);
-		$queryCount = preg_replace (array_keys ($placeholders), array_values ($placeholders), $query);
-		
-		# Perform a count first; use a negative look-around to match the section between SELECT ... FROM - see http://stackoverflow.com/questions/406230
-		$dataCount = $this->databaseConnection->getOne ($queryCount);
-		$total = $dataCount['total'];
-		
-		# Get the requested page and calculate the pagination
-		require_once ('application.php');
-		$requestedPage = ((isSet ($_GET['page']) && ctype_digit ($_GET['page'])) ? $_GET['page'] : 1);
-		list ($totalPages, $offset, $items, $limit, $page) = application::getPagerData ($total, $paginationRecordsPerPage, $requestedPage);
-		
-		# Now construct the main query
-		$placeholders = array (
-			'/^SELECT (?! FROM ).+ FROM/' => 'SELECT * FROM',
-			'/;$/' => " LIMIT {$offset}, {$limit};",
-		);
-		$queryData = preg_replace (array_keys ($placeholders), array_values ($placeholders), $query);
-		
-		# Get the data
-		$data = $this->databaseConnection->getData ($queryData, $associative, $keyed, $preparedStatementValues);
-		
-		# Return the data and the total
-		return array ($data, $total);
-	}
-	
-	
-	
 	# Function to do the search
 	private function searchResult ($result, $fields)
 	{
 		# Start the HTML
 		$html  = '';
+		
+		# Cache and clear out output format details if set
+		$exportFormat = false;
+		if (isSet ($result['exportformat'])) {
+			$exportFormat = $result['exportformat'];
+			unset ($result['exportformat']);
+		}
+		
+		# Cache and clear out pagination details if set
+		$page = 1;
+		if (isSet ($result['page'])) {
+			$page = $result['page'];
+			unset ($result['page']);
+		}
 		
 		# Determine if this is a simple search (i.e. an array as strictly array('search'=>value), compile the search phrases
 		$isSimpleSearch = ($result && (count ($result) == 1) && (isSet ($result['search'])));
@@ -328,36 +341,73 @@ class multisearch
 		$isGeographicSearch = ($result && (count ($result) == 1) && (isSet ($result[$geographicSearchField])));
 		
 		# Get the search clauses
+		$singleSearchTerm = false;
 		if ($isSimpleSearch) {
 			$searchClauses = $this->searchClausesSimple ($result, $fields);
 			$searchClausesSql = implode (' OR ', $searchClauses);
+			$singleSearchTerm = $result['search'];
 		} else {
 			$searchClauses = $this->searchClausesAdvanced ($result, $fields);
 			$searchClausesSql = implode (' AND ', $searchClauses);
+			if (count ($result) == 1) {
+				$singleSearchTerms = array_values ($result);
+				$singleSearchTerm = $singleSearchTerms[0];
+			}
 		}
 		
 		# Construct the query
-		$query = "SELECT * FROM {$this->settings['database']}.{$this->settings['table']} WHERE " . $searchClausesSql . " ORDER BY natsort;";
-		list ($data, $totalAvailable) = $this->getDataViaPagination ($query, false, true, array (), $this->settings['paginationRecordsPerPage']);
+		$datasource = "{$this->settings['database']}.{$this->settings['table']}";
+		if ($isGeographicSearch) {
+			$datasource = $this->geographicSearchDatasourceSubquery ($geographicSearchField, $result[$geographicSearchField]);
+			$singleSearchTerm = false;
+		}
+		$query = "SELECT * FROM {$datasource} WHERE " . $searchClausesSql . " ORDER BY {$this->settings['orderBy']};";	// NB LIMIT may be attached below
+		
+		# Export if required
+		if ($this->settings['exportingEnabled']) {
+			if ($exportFormat && $exportFormat == 'csv') {
+				
+				# Limit only to the maximum limit
+				if ($this->settings['searchResultsMaximumLimit']) {
+					$query = preg_replace ('/;$/', " LIMIT {$this->settings['searchResultsMaximumLimit']};", $query);
+				}
+				
+				# Get the data
+				$data = $this->databaseConnection->getData ($query, false, true, array (), $this->settings['showFields']);
+				
+				# Modify the data (e.g. excluding fields, swapping codings, etc.)
+				$data = $this->modifyResults ($data);
+				
+				# Assign header labels if required
+				$headerLabels = array ();
+				if ($this->settings['exportingFieldLabels']) {
+					$headerLabels = $this->databaseConnection->getHeadings ($this->settings['database'], $this->settings['table']);
+				}
+				
+				# Serve as CSV
+				require_once ('csv.php');
+				csv::serve ($data, "{$this->settings['table']}_results", true, $headerLabels);
+				return true;
+			}
+		}
+		
+		# Get the data via pagination
+		list ($data, $totalAvailable, $totalPages, $page, $actualMatchesReachedMaximum) = $this->databaseConnection->getDataViaPagination ($query, false, true, array (), $this->settings['showFields'], $this->settings['paginationRecordsPerPage'], $page, $this->settings['searchResultsMaximumLimit']);
+		
+		# Define text for a single search term
+		$singleSearchTermHtml = ($singleSearchTerm ? ' matching <em>' . htmlspecialchars ($singleSearchTerm) . '</em>' : '');
 		
 		# End if no results
 		if (!$data) {
-			$html .= "\n<p>No items were found.</p>";
+			$html .= "\n<p>No items were found{$singleSearchTermHtml}.</p>";
 		} else {
 			
 			# Show the count
 			$total = count ($data);
-			$html .= "\n<p>There " . ($totalAvailable == 1 ? 'is one item' : "are {$totalAvailable} items") . '.' . ($totalAvailable == $total ? '' : ($total == 1 ? ' One is shown.' : " {$total} are shown.")) . '</p>';
+			$html .= "\n<p>There " . ($totalAvailable == 1 ? 'is <strong>one</strong> item' : ($actualMatchesReachedMaximum ? 'are <strong>' . number_format ($actualMatchesReachedMaximum) . "</strong> items{$singleSearchTermHtml} <strong>but</strong> a maximum of <strong>" . number_format ($totalAvailable) . "</strong> can be shown in a search (so you may wish to refine your search below).<br />" : "are <strong>{$totalAvailable}</strong> items{$singleSearchTermHtml}. ")) . ($totalPages == 1 ? '' : "Showing {$this->settings['paginationRecordsPerPage']} records per page.") . '</p>';
 			
-			# Create a table of items
-			foreach ($data as $index => $record) {
-				$id = $record[$this->settings['keyField']];
-				foreach ($record as $key => $value) {
-					if (!in_array ($key, $this->settings['showFields'])) {
-						unset ($data[$index][$key]);
-					}
-				}
-			}
+			# Modify the data (e.g. excluding fields, swapping codings, etc.)
+			$data = $this->modifyResults ($data);
 			
 			# Make all data entity-safe (as the table will not be doing this directly)
 			foreach ($data as $index => $record) {
@@ -401,15 +451,51 @@ class multisearch
 		$html .= $this->searchForm ($fields, $result, $isSimpleSearch);
 		$html .= "\n" . '</div>';
 		
-		# Create the table
+		# Create the table, starting with pagination
 		if ($data) {
+			$queryStringComplete = http_build_query ($result);
+			$paginationLinks = application::paginationLinks ($page, $totalPages, $this->baseUrl, $queryStringComplete);
+			if ($this->settings['exportingEnabled']) {
+				$html .= "\n<p class=\"" . ($paginationLinks ? 'right' : 'alignright') . "\"><a href=\"{$this->baseUrl}results.csv?" . htmlspecialchars ($queryStringComplete) . '"><img src="/images/fileicons/csv.gif" alt="" width="16" height="16" border="0" /> Export all to CSV (Excel)</a>' . ($paginationLinks ? ' <abbr title="This will export the full set of results for this search, not just the paginated subset below' . ($actualMatchesReachedMaximum ? ', subject to the maximum of ' . number_format ($totalAvailable) . ' items' : '') . '.">[?]</abbr>' : '') . '</p>';
+			}
+			$html .= $paginationLinks;
 			$headings = $this->databaseConnection->getHeadings ($this->settings['database'], $this->settings['table']);
 			$html .= "\n" . '<!-- Enable table sortability: --><script language="javascript" type="text/javascript" src="http://www.geog.cam.ac.uk/sitetech/sorttable.js"></script>';
-			$html .= application::htmlTable ($data, $headings, $class = 'searchresult lines sortable" id="sortable', $keyAsFirstColumn = false, false, $allowHtml = true);
+			$html .= application::htmlTable ($data, $headings, $class = 'searchresult lines sortable" id="sortable', $keyAsFirstColumn = false, false, $allowHtml = true, false, $addCellClasses = true);
 		}
 		
 		# Return the HTML
 		return $html;
+	}
+	
+	
+	# Function to modify the output data (e.g. excluding fields, swapping codings, etc.)
+	private function modifyResults ($data)
+	{
+		# Exclude fields if required
+		if ($this->settings['excludeFields']) {
+			foreach ($data as $index => $record) {
+				foreach ($record as $key => $value) {
+					if (in_array ($key, $this->settings['excludeFields'])) {
+						unset ($data[$index][$key]);
+					}
+				}
+			}
+		}
+		
+		# Swap in codings if supplied
+		if ($this->settings['codings']) {
+			foreach ($data as $index => $record) {
+				foreach ($record as $key => $value) {
+					if (isSet ($this->settings['codings'][$key]) && isSet ($this->settings['codings'][$key][$value])) {
+						$data[$index][$key] = $this->settings['codings'][$key][$value];
+					}
+				}
+			}
+		}
+		
+		# Return the data
+		return $data;
 	}
 	
 	
@@ -479,7 +565,7 @@ class multisearch
 					
 				case 'point':
 					if ($geom = $this->jsonPolygonToGeom ($value)) {
-						if ($this->settings['geographicSearchTrueWithin']) {
+						if ($this->settings['geographicSearchTrueWithin']) {	// Note also the geographicSearchDatasourceSubquery() to prefilter the dataset first
 							$searchClauses[$key] = "trueWithin({$key}, " . $geom . ')';	// See trueWithin in within.sql from CycleStreets codebase
 						} else {
 							$searchClauses[$key] = "MBRContains(" . $geom . ", {$key})";	// See http://dev.mysql.com/doc/refman/4.1/en/relations-on-geometry-mbr.html
@@ -493,6 +579,38 @@ class multisearch
 		
 		# Return the search clauses
 		return $searchClauses;
+	}
+	
+	
+	# Function to provide a subquery for geographic search
+	private function geographicSearchDatasourceSubquery ($key, $value)
+	{
+		# Optimise based on the database vendor
+		switch ($this->databaseConnection->vendor) {
+			
+			// MySQL has poor MBRContains()/Within() support, so we use a subquery to cut down the initial table size to a smaller bounding box first
+			case 'mysql':
+				if ($this->settings['geographicSearchTrueWithin']) {	// Don't do this if there is no true Within() function available
+					if ($geom = $this->jsonPolygonToGeom ($value)) {
+						$table = "(
+							SELECT
+							*
+							FROM {$this->settings['database']}.{$this->settings['table']}
+							WHERE MBRContains(" . $geom . ", {$key})
+						) AS mbrPrefiltered";
+						return $table;
+					}
+				}
+				break;
+				
+			// PostgreSQL not yet determined - probably won't need any optimisation
+			default:
+				break;
+		}
+		
+		# Fallback is to return the standard table setting
+		$default = "{$this->settings['database']}.{$this->settings['table']}";
+		return $default;
 	}
 	
 	
