@@ -1,5 +1,7 @@
 <?php
 
+# Version 1.0.0
+
 
 # Class to create a search page supporting simple search and advanced search
 class multisearch
@@ -45,6 +47,7 @@ class multisearch
 		# Load required libraries
 		require_once ('application.php');
 		require_once ('database.php');
+		require_once ('jquery.php');
 		require_once ('ultimateForm.php');
 		
 		# Merge in the arguments; note that $errors returns the errors by reference and not as a result from the method
@@ -86,18 +89,23 @@ class multisearch
 		}
 		*/
 		
-		# If there is a set of GET data (which is not checked for matching fields, as they could change over time), do the search; otherwise show the form
+		# Copy the GET data
 		$get = $_GET;
+		
+		# Determine if there is to be a geometry field
+		$geometry = $this->getGeometryFromRequest ();
+		
+		# If there is a set of GET data (which is not checked for matching fields, as they could change over time), do the search; otherwise show the form
 		unset ($get['action']);
 		if ($get) {
-			$result = $this->searchResult ($get, $fields);
+			$result = $this->searchResult ($get, $fields, $geometry);
 			if ($result === true) {		// i.e. export format
 				return true;
 			} else {
 				$html .= $result;
 			}
 		} else {
-			$html .= $this->searchForm ($fields);
+			$html .= $this->searchForm ($fields, array (), true, $geometry);
 		}
 		
 		# Register the HTML
@@ -106,27 +114,24 @@ class multisearch
 	
 	
 	# Search form wrapper function
-	private function searchForm ($fields, $data = array (), $simpleHasAutofocus = true)
+	private function searchForm ($fields, $data = array (), $simpleHasAutofocus = true, $geometry = false)
 	{
+		# Do a geography-only search if required
+		if ($this->settings['geographicSearchEnabled']) {
+			if (!$this->searchFormByLocation ()) {return false;}
+		}
+		
 		# Add the simple form, ending if false (indicating a redirect) is returned
 		$searchFormSimple = '';
 		if ($this->settings['enableSimpleSearch']) {
-			if (!$searchFormSimple		= $this->searchFormSimple ($fields, $data, $simpleHasAutofocus)) {return false;}
-		}
-		
-		# Add GeoJSON support if required
-		if ($this->settings['geographicSearchEnabled']) {
-			if (!$searchFormByLocation		= $this->searchFormByLocation ()) {return false;}
-		} else {
-			$searchFormByLocation = false;
+			if (!$searchFormSimple = $this->searchFormSimple ($fields, $data, $simpleHasAutofocus, $geometry)) {return false;}
 		}
 		
 		# Add the advanced form
-		if (!$searchFormAdvanced	= $this->searchFormAdvanced ($fields, $data, !$simpleHasAutofocus)) {return false;}
+		if (!$searchFormAdvanced = $this->searchFormAdvanced ($fields, $data, !$simpleHasAutofocus, $geometry)) {return false;}
 		
 		# Compile the HTML
 		$html  = $searchFormSimple;
-		$html .= $searchFormByLocation;
 		$html .= $searchFormAdvanced;
 		
 		# Return the HTML
@@ -134,14 +139,38 @@ class multisearch
 	}
 	
 	
+	# Function to get the geometry from a request
+	private function getGeometryFromRequest ()
+	{
+		# Return false if not enabled
+		if (!$this->settings['geographicSearchEnabled']) {return false;}
+		
+		# Prefer posted data
+		if (isSet ($_POST[$this->settings['geographicSearchField']])) {
+			return $_POST[$this->settings['geographicSearchField']];
+		}
+		
+		# Otherwise try GET
+		if (isSet ($_GET[$this->settings['geographicSearchField']])) {
+			return $_GET[$this->settings['geographicSearchField']];
+		}
+		
+		# No data
+		return false;
+	}
+	
 	# Function to provide the search form - simple search
-	private function searchFormSimple ($fields, $data = array (), $hasAutofocus = false)
+	private function searchFormSimple ($fields, $data = array (), $hasAutofocus = false, $geometry = false)
 	{
 		# Start the HTML
-		$html  = "\n<p>Use this simple box to search the {$this->settings['description']}. It will search through the {$this->settings['description']} numbers and captions. For a more advanced search, see below.</p>";
+		$html  = "\n<h2>Simple keyword search</h2>";
+		$html .= "\n<p>Use this simple box to search the {$this->settings['description']}. It will search through the {$this->settings['description']} numbers and captions. For a more advanced search, see below.</p>";
 		
 		# Create a search form
 		$template  = "\n{[[PROBLEMS]]}\n{search} {[[SUBMIT]]}";
+		if ($this->settings['geographicSearchEnabled']) {
+			$template .= "\n<p>{{$this->settings['geographicSearchField']}}</p>";
+		}
 		$form = new form (array (
 			'displayRestrictions' => false,
 			'formCompleteText' => false,
@@ -155,6 +184,13 @@ class multisearch
 			'name' => false,
 			'submitTo' => $this->baseUrl,
 		));
+		
+		# Add geometry field if required
+		if ($this->settings['geographicSearchEnabled']) {
+			$this->formGeometryField ($form, $geometry);
+		}
+		
+		# Main search box
 		$form->search (array (
 			'name'			=> 'search',
 			'title'			=> 'Search for:',
@@ -231,17 +267,28 @@ class multisearch
 			}
 		}
 		
-		# Construct the HTML
-		$html  = "\n<h2>Search by location</h2>";
-		$html .= "\n" . sprintf ('<p>You can <a href="%s">search for items in an area</a> using the map controls.</p>', $this->settings['geographicSearchMapUrl']);
-		
-		# Return the HTML
-		return $html;
+		# Return return
+		return true;
+	}
+	
+	
+	# Function to provide a geometry field in the form
+	private function formGeometryField (&$form, $geometry)
+	{
+		# If a geometry is defined, retain that as a hidden field
+		$form->input (array (
+			'name'	=> $this->settings['geographicSearchField'],
+			'title' => 'Map area',
+			'default' => $geometry,
+			'editable' => false,
+			'displayedValue' => ($geometry ? "Map area defined &#10004; &nbsp;[or <a href=\"{$this->baseUrl}\">reset all</a>]" : "<a href=\"{$this->settings['geographicSearchMapUrl']}\">No map area filter defined</a>"),
+			'entities' => false,
+		));
 	}
 	
 	
 	# Function to provide the search form - advanced search
-	private function searchFormAdvanced ($fields, $data = array (), $hasAutofocus = false)
+	private function searchFormAdvanced ($fields, $data = array (), $hasAutofocus = false, $geometry = false)
 	{
 		# Start the HTML
 		$html  = "\n<h2>Advanced search</h2>";
@@ -258,6 +305,11 @@ class multisearch
 			'submitTo' => $this->baseUrl,
 			'nullText' => false,
 		));
+		
+		# Add geometry field if required
+		if ($this->settings['geographicSearchEnabled']) {
+			$this->formGeometryField ($form, $geometry);
+		}
 		
 		# Define the dataBinding attributes
 		$dataBindingAttributes = array (
@@ -295,7 +347,7 @@ class multisearch
 		# Obtain the result
 		if ($result = $form->process ($html)) {
 			
-			# Filter to include only those where the user has specified a value
+			# Filter to include only those where the user has specified a value, to keep the URL as short as possible
 			foreach ($result as $key => $value) {
 				if (!strlen ($value)) {
 					unset ($result[$key]);
@@ -314,7 +366,7 @@ class multisearch
 	
 	
 	# Function to do the search
-	private function searchResult ($result, $fields)
+	private function searchResult ($result, $fields, $geometry)
 	{
 		# Start the HTML
 		$html  = '';
@@ -334,11 +386,12 @@ class multisearch
 		}
 		
 		# Determine if this is a simple search (i.e. an array as strictly array('search'=>value), compile the search phrases
-		$isSimpleSearch = ($result && (count ($result) == 1) && (isSet ($result['search'])));
-		
-		# Determine if this is a geographic search
-		$geographicSearchField = $this->settings['geographicSearchField'];
-		$isGeographicSearch = ($result && (count ($result) == 1) && (isSet ($result[$geographicSearchField])));
+		$isSimpleSearch = false;
+		if ($result) {
+			$keys = array_keys ($result);
+			if ((count ($keys) == 2) && isSet ($result['search']) && isSet ($result['lonLat'])) {$isSimpleSearch = true;}
+			if ((count ($keys) == 1) && isSet ($result['search'])) {$isSimpleSearch = true;}
+		}
 		
 		# Get the search clauses
 		$singleSearchTerm = false;
@@ -357,8 +410,8 @@ class multisearch
 		
 		# Construct the query
 		$datasource = "{$this->settings['database']}.{$this->settings['table']}";
-		if ($isGeographicSearch) {
-			$datasource = $this->geographicSearchDatasourceSubquery ($geographicSearchField, $result[$geographicSearchField]);
+		if ($geometry) {
+			$datasource = $this->geographicSearchDatasourceSubquery ($this->settings['geographicSearchField'], $result[$this->settings['geographicSearchField']]);
 			$singleSearchTerm = false;
 		}
 		$query = "SELECT * FROM {$datasource} WHERE " . $searchClausesSql . " ORDER BY {$this->settings['orderBy']};";	// NB LIMIT may be attached below
@@ -442,13 +495,9 @@ class multisearch
 			</script>
 			<style type="text/css">#searchform {display: none;}</style>
 		';
-		if ($isGeographicSearch) {
-			$html .= "\n" . sprintf ('<p><a href="%s">Define a different map area</a> if you wish, or try a <a href="' . $this->baseUrl . '">text search</a>.</p>', $this->settings['geographicSearchMapUrl']);
-		} else {
-			$html .= "\n" . '<p><a id="showform" name="showform">Refine this search</a> if you wish.</p>';
-		}
+		$html .= "\n" . '<p><a id="showform" name="showform"><img src="/images/icons/pencil.png" alt="" border="0" /> <strong>Refine/filter this search</strong></a> if you wish.</p>';
 		$html .= "\n" . '<div id="searchform">';
-		$html .= $this->searchForm ($fields, $result, $isSimpleSearch);
+		$html .= $this->searchForm ($fields, $result, $isSimpleSearch, $geometry);
 		$html .= "\n" . '</div>';
 		
 		# Create the table, starting with pagination
@@ -531,7 +580,7 @@ class multisearch
 		
 		# End if no approved search parameters
 		if (!$result) {
-			$html  = "\n<p>No valid search parameters were supplied. Please <a href=\"{$this->baseUrl}/search/\">try a new search</a>.</p>";
+			$html  = "\n<p>No valid search parameters were supplied. Please <a href=\"{$this->baseUrl}\">try a new search</a>.</p>";
 			return $html;
 		}
 		
