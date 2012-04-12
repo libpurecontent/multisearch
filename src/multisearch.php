@@ -1,6 +1,6 @@
 <?php
 
-# Version 1.0.0
+# Version 1.0.1
 
 
 # Class to create a search page supporting simple search and advanced search
@@ -25,13 +25,14 @@ class multisearch
 		'enumRadiobuttonsInitialNullText'	=> array (),	// e.g. array ('foo' => 'Either') which would put "Either" as the empty enum text at the start of widget 'foo'
 		'searchResultsMaximumLimit'			=> false,
 		'geographicSearchEnabled'			=> false,		// Enables GeoJSON binding - specify the fieldname in POST, or false to disable
-		'geographicSearchMapUrl'			=> '/',
+		'geographicSearchMapUrl'			=> '/?mode=draw',
 		'geographicSearchField'				=> 'geometry',	// Spatial database field for location search
 		'geographicSearchTrueWithin'		=> true,	// If the trueWithin function is available in SQL
 		// 'queryArgSeparator'				=> ',',
 		'exportingEnabled'					=> true,	// Whether CSV export is enabled
 		'exportingFieldLabels'				=> false,	// Whether to use field labels if available rather than the field names when exporting
 		'codings'							=> false,	// Codings (lookups of data in the table)
+		'jQueryLoaded'						=> false,	// Whether jQuery has already been loaded
 	);
 	
 	
@@ -47,7 +48,7 @@ class multisearch
 		# Load required libraries
 		require_once ('application.php');
 		require_once ('database.php');
-		require_once ('jquery.php');
+		//require_once ('jquery.php');	// Added below
 		require_once ('ultimateForm.php');
 		
 		# Merge in the arguments; note that $errors returns the errors by reference and not as a result from the method
@@ -121,18 +122,37 @@ class multisearch
 			if (!$this->searchFormByLocation ()) {return false;}
 		}
 		
+		# Start a list of forms
+		$forms = array ();
+		
 		# Add the simple form, ending if false (indicating a redirect) is returned
-		$searchFormSimple = '';
 		if ($this->settings['enableSimpleSearch']) {
 			if (!$searchFormSimple = $this->searchFormSimple ($fields, $data, $simpleHasAutofocus, $geometry)) {return false;}
+			$forms['simple'] = $searchFormSimple;
 		}
 		
 		# Add the advanced form
 		if (!$searchFormAdvanced = $this->searchFormAdvanced ($fields, $data, !$simpleHasAutofocus, $geometry)) {return false;}
+		$forms['advanced'] = $searchFormAdvanced;
 		
-		# Compile the HTML
-		$html  = $searchFormSimple;
-		$html .= $searchFormAdvanced;
+		# Compile the HTML, adding tabs if more than one form type enabled
+		if (count ($forms) == 1) {
+			$html = $forms['advanced'];
+		} else {
+			$html = implode ($forms);
+			
+			# Define the tabs
+			$labels = array (
+				'simple' => 'Simple keyword search',
+				'advanced' => 'Advanced search',
+			);
+			
+			# Load into tabs
+			require_once ('jquery.php');
+			$jQuery = new jQuery (false, false, false, $this->settings['jQueryLoaded']);
+			$jQuery->tabs ($labels, $forms, $switchToTabNumber = '0', false, 'boxed');
+			$html  = $jQuery->getHtml ();
+		}
 		
 		# Return the HTML
 		return $html;
@@ -275,13 +295,17 @@ class multisearch
 	# Function to provide a geometry field in the form
 	private function formGeometryField (&$form, $geometry)
 	{
+		# Define a tick symbol
+		$isOldIE = preg_match ('/MSIE [1-8]\./', $_SERVER['HTTP_USER_AGENT']);
+		$tick = ($isOldIE ? '&radic;' : '&#10004;');
+		
 		# If a geometry is defined, retain that as a hidden field
 		$form->input (array (
 			'name'	=> $this->settings['geographicSearchField'],
 			'title' => 'Map area',
 			'default' => $geometry,
 			'editable' => false,
-			'displayedValue' => ($geometry ? "Map area defined &#10004; &nbsp;[or <a href=\"{$this->baseUrl}\">reset all</a>]" : "<a href=\"{$this->settings['geographicSearchMapUrl']}\">No map area filter defined</a>"),
+			'displayedValue' => ($geometry ? $tick . ' <img src="/images/icons/map.png" alt="Map" border="0" />' . " Map area defined &nbsp;[or <a href=\"{$this->baseUrl}\">reset all</a>]" : "<a href=\"{$this->settings['geographicSearchMapUrl']}\">+ Set map area filter</a>"),
 			'entities' => false,
 		));
 	}
@@ -291,7 +315,10 @@ class multisearch
 	private function searchFormAdvanced ($fields, $data = array (), $hasAutofocus = false, $geometry = false)
 	{
 		# Start the HTML
-		$html  = "\n<h2>Advanced search</h2>";
+		$html  = '';
+		if ($this->settings['enableSimpleSearch']) {	// Don't show this heading if it is the only search
+			$html  = "\n<h2>Advanced search</h2>";
+		}
 		$html .= "\n<p>Here you can add search terms for parts of the {$this->settings['description']} data.</p>";
 		$html .= "\n<p>For partial names, use * for the part of a word/term you don't know. For instance, an ID search for <em>70h*</em> would find items beginning with '70h'.</p>";
 		
