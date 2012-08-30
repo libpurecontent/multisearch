@@ -1,6 +1,6 @@
 <?php
 
-# Version 1.0.1
+# Version 1.0.2
 
 
 # Class to create a search page supporting simple search and advanced search
@@ -12,6 +12,7 @@ class multisearch
 		'baseUrl'							=> NULL,
 		'database'							=> NULL,
 		'table'								=> NULL,
+		'dataBindingParameters'				=> array (),
 		'description'						=> 'catalogue',	// As in, "search the %description"
 		'keyField'							=> 'id',
 		'orderBy'							=> 'id',
@@ -19,6 +20,7 @@ class multisearch
 		'mainSubjectField'					=> NULL,
 		'excludeFields'						=> array (),	// Fields should not appear in the search form or the search results table
 		'showFields'						=> NULL,
+		'ignoreKeys'						=> array (),	// Defined query string parameters to ignore, e.g. values from a surrounding application's query string
 		'recordLink'						=> NULL,
 		'paginationRecordsPerPage'			=> 50,
 		'enumRadiobuttons'					=> 1,
@@ -33,6 +35,9 @@ class multisearch
 		'exportingFieldLabels'				=> false,	// Whether to use field labels if available rather than the field names when exporting
 		'codings'							=> false,	// Codings (lookups of data in the table)
 		'jQueryLoaded'						=> false,	// Whether jQuery has already been loaded
+		'headingLevel'						=> 2,
+		'resultsContainerClass'				=> 'boxed',
+		'resultRenderer'					=> false,	// Result renderer, as a callable function, i.e. array(class,method)
 	);
 	
 	
@@ -77,7 +82,12 @@ class multisearch
 	private function main ()
 	{
 		# Start the HTML
-		$html  = "\n<h2>Search</h2>";
+		$html  = '';
+		
+		# Add the heading if required
+		if ($this->settings['headingLevel']) {
+			$html .= "\n<h{$this->settings['headingLevel']}>Search</h{$this->settings['headingLevel']}>";
+		}
 		
 		# Get the database fields
 		$fields = $this->databaseConnection->getFields ($this->settings['database'], $this->settings['table'], $addSimpleType = true);
@@ -92,6 +102,15 @@ class multisearch
 		
 		# Copy the GET data
 		$get = $_GET;
+		
+		# Clear out defined query string parameters, e.g. values from a surrounding application's query string
+		if ($this->settings['ignoreKeys'] && is_array ($this->settings['ignoreKeys'])) {
+			foreach ($this->settings['ignoreKeys'] as $key) {
+				if (array_key_exists ($key, $get)) {
+					unset ($get[$key]);
+				}
+			}
+		}
 		
 		# Determine if there is to be a geometry field
 		$geometry = $this->getGeometryFromRequest ();
@@ -150,7 +169,7 @@ class multisearch
 			# Load into tabs
 			require_once ('jquery.php');
 			$jQuery = new jQuery (false, false, false, $this->settings['jQueryLoaded']);
-			$jQuery->tabs ($labels, $forms, $switchToTabNumber = '0', false, 'boxed');
+			$jQuery->tabs ($labels, $forms, $switchToTabNumber = '0', false, $this->settings['resultsContainerClass']);
 			$html  = $jQuery->getHtml ();
 		}
 		
@@ -183,8 +202,9 @@ class multisearch
 	private function searchFormSimple ($fields, $data = array (), $hasAutofocus = false, $geometry = false)
 	{
 		# Start the HTML
-		$html  = "\n<h2>Simple keyword search</h2>";
-		$html .= "\n<p>Use this simple box to search the {$this->settings['description']}. It will search through the {$this->settings['description']} numbers and captions. For a more advanced search, see below.</p>";
+		$headingLevel = ($this->settings['headingLevel'] ? $this->settings['headingLevel'] + 1 : 3);
+		$html  = "\n<h{$headingLevel}>Simple keyword search</h{$headingLevel}>";
+		$html .= "\n<p>Use this simple box to search the {$this->settings['description']}. It will search through the {$this->settings['description']} numbers and captions. For a more advanced search, see the other tab.</p>";
 		
 		# Create a search form
 		$template  = "\n{[[PROBLEMS]]}\n{search} {[[SUBMIT]]}";
@@ -317,10 +337,11 @@ class multisearch
 		# Start the HTML
 		$html  = '';
 		if ($this->settings['enableSimpleSearch']) {	// Don't show this heading if it is the only search
-			$html  = "\n<h2>Advanced search</h2>";
+			$headingLevel = ($this->settings['headingLevel'] ? $this->settings['headingLevel'] + 1 : 3);
+			$html  = "\n<h{$headingLevel}>Advanced search</h{$headingLevel}>";
 		}
 		$html .= "\n<p>Here you can add search terms for parts of the {$this->settings['description']} data.</p>";
-		$html .= "\n<p>For partial names, use * for the part of a word/term you don't know. For instance, an ID search for <em>70h*</em> would find items beginning with '70h'.</p>";
+		$html .= "\n<p>For partial names, use * for the part of a word/term you don't know. For instance, an ID search for <em>70*</em> would find items beginning with '70'.</p>";
 		
 		# Create the search form
 		$form = new form (array (
@@ -353,15 +374,8 @@ class multisearch
 			}
 		}
 		
-		# Prevent required fields
-		foreach ($fields as $fieldname => $field) {
-			if ($field['Null'] == 'NO') {
-				$dataBindingAttributes[$fieldname]['required'] = false;
-			}
-		}
-		
-		# Databind the form
-		$form->dataBinding (array (
+		# Define the default dataBinding parameters
+		$dataBindingParameters = array (
 			'database' => $this->settings['database'],
 			'table' => $this->settings['table'],
 			'exclude' => $this->settings['excludeFields'],
@@ -369,7 +383,23 @@ class multisearch
 			'enumRadiobuttons' => $this->settings['enumRadiobuttons'],
 			'enumRadiobuttonsInitialNullText' => $this->settings['enumRadiobuttonsInitialNullText'],
 			'data' => $data,
-		));
+		);
+		
+		# Add in any overriding dataBinding parameters, with supplied parameters taking priority; do not allow data to be supplied
+		if ($this->settings['dataBindingParameters']) {
+			if (isSet ($this->settings['dataBindingParameters']['data'])) {unset ($this->settings['dataBindingParameters']['data']);}
+			$dataBindingParameters = $this->settings['dataBindingParameters'] + $dataBindingParameters;
+		}
+		
+		# Prevent required fields
+		foreach ($fields as $fieldname => $field) {
+			if ($field['Null'] == 'NO') {
+				$dataBindingParameters['attributes'][$fieldname]['required'] = false;
+			}
+		}
+		
+		# Databind the form
+		$form->dataBinding ($dataBindingParameters);
 		
 		# Obtain the result
 		if ($result = $form->process ($html)) {
@@ -472,7 +502,7 @@ class multisearch
 		}
 		
 		# Get the data via pagination
-		list ($data, $totalAvailable, $totalPages, $page, $actualMatchesReachedMaximum) = $this->databaseConnection->getDataViaPagination ($query, false, true, array (), $this->settings['showFields'], $this->settings['paginationRecordsPerPage'], $page, $this->settings['searchResultsMaximumLimit']);
+		list ($data, $totalAvailable, $totalPages, $page, $actualMatchesReachedMaximum) = $this->databaseConnection->getDataViaPagination ($query, "{$this->settings['database']}.{$this->settings['table']}", true, array (), $this->settings['showFields'], $this->settings['paginationRecordsPerPage'], $page, $this->settings['searchResultsMaximumLimit']);
 		
 		# Define text for a single search term
 		$singleSearchTermHtml = ($singleSearchTerm ? ' matching <em>' . htmlspecialchars ($singleSearchTerm) . '</em>' : '');
@@ -490,22 +520,22 @@ class multisearch
 			$data = $this->modifyResults ($data);
 			
 			# Make all data entity-safe (as the table will not be doing this directly)
-			foreach ($data as $index => $record) {
+			foreach ($data as $recordKey => $record) {
 				$id = $record[$this->settings['keyField']];
 				foreach ($record as $key => $value) {
-					$data[$index][$key] = htmlspecialchars ($data[$index][$key]);
+					$data[$recordKey][$key] = htmlspecialchars ($data[$recordKey][$key]);
 				}
 			}
 			
 			# Create a link to the item
-			foreach ($data as $index => $record) {
+			foreach ($data as $recordKey => $record) {
 				$recordLink = $this->settings['recordLink'];
 				foreach ($record as $key => $value) {
 					$recordLink = str_replace ("%lower({$key})", urlencode (strtolower ($value)), $recordLink);
 					$recordLink = str_replace ("%{$key}", urlencode ($value), $recordLink);
 				}
 				$recordLink = htmlspecialchars ($recordLink);
-				$data[$index][$this->settings['keyField']] = "<a href=\"{$recordLink}\">" . $record[$this->settings['keyField']] . '</a>';
+				$data[$recordKey][$this->settings['keyField']] = "<a href=\"{$recordLink}\">" . $record[$this->settings['keyField']] . '</a>';
 			}
 		}
 		
@@ -535,10 +565,33 @@ class multisearch
 				$html .= "\n<p class=\"" . ($paginationLinks ? 'right' : 'alignright') . "\"><a href=\"{$this->baseUrl}results.csv?" . htmlspecialchars ($queryStringComplete) . '"><img src="/images/fileicons/csv.gif" alt="" width="16" height="16" border="0" /> Export all to CSV (Excel)</a>' . ($paginationLinks ? ' <abbr title="This will export the full set of results for this search, not just the paginated subset below' . ($actualMatchesReachedMaximum ? ', subject to the maximum of ' . number_format ($totalAvailable) . ' items' : '') . '.">[?]</abbr>' : '') . '</p>';
 			}
 			$html .= $paginationLinks;
-			$headings = $this->databaseConnection->getHeadings ($this->settings['database'], $this->settings['table']);
-			$html .= "\n" . '<!-- Enable table sortability: --><script language="javascript" type="text/javascript" src="http://www.geog.cam.ac.uk/sitetech/sorttable.js"></script>';
-			$html .= application::htmlTable ($data, $headings, $class = 'searchresult lines sortable" id="sortable', $keyAsFirstColumn = false, false, $allowHtml = true, false, $addCellClasses = true);
+			
+			# Determine the table renderer
+			list ($resultRendererClass, $resultRendererMethod) = array ($this, 'resultsTable');
+			if ($this->settings['resultRenderer'] && is_array ($this->settings['resultRenderer']) && (count ($this->settings['resultRenderer']) == 2)) {
+				if (method_exists ($this->settings['resultRenderer'][0], $this->settings['resultRenderer'][1])) {
+					list ($resultRendererClass, $resultRendererMethod) = $this->settings['resultRenderer'];
+				}
+			}
+			
+			# Render the table
+			$html .= $resultRendererClass->{$resultRendererMethod} ($data, $this->settings['table']);
 		}
+		
+		# Return the HTML
+		return $html;
+	}
+	
+	
+	# Function to create the data table
+	private function resultsTable ($data, $table)
+	{
+		# Get the headings
+		$headings = $this->databaseConnection->getHeadings ($this->settings['database'], $table);
+		
+		# Compile the HTML
+		$html  = "\n" . '<!-- Enable table sortability: --><script language="javascript" type="text/javascript" src="http://www.geog.cam.ac.uk/sitetech/sorttable.js"></script>';
+		$html .= application::htmlTable ($data, $headings, $class = 'searchresult lines sortable" id="sortable', $keyAsFirstColumn = false, false, $allowHtml = true, false, $addCellClasses = true);
 		
 		# Return the HTML
 		return $html;
@@ -550,10 +603,10 @@ class multisearch
 	{
 		# Exclude fields if required
 		if ($this->settings['excludeFields']) {
-			foreach ($data as $index => $record) {
+			foreach ($data as $recordKey => $record) {
 				foreach ($record as $key => $value) {
 					if (in_array ($key, $this->settings['excludeFields'])) {
-						unset ($data[$index][$key]);
+						unset ($data[$recordKey][$key]);
 					}
 				}
 			}
@@ -561,10 +614,10 @@ class multisearch
 		
 		# Swap in codings if supplied
 		if ($this->settings['codings']) {
-			foreach ($data as $index => $record) {
+			foreach ($data as $recordKey => $record) {
 				foreach ($record as $key => $value) {
 					if (isSet ($this->settings['codings'][$key]) && isSet ($this->settings['codings'][$key][$value])) {
-						$data[$index][$key] = $this->settings['codings'][$key][$value];
+						$data[$recordKey][$key] = $this->settings['codings'][$key][$value];
 					}
 				}
 			}
