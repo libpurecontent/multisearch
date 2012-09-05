@@ -1,6 +1,6 @@
 <?php
 
-# Version 1.0.2
+# Version 1.1.0
 
 
 # Class to create a search page supporting simple search and advanced search
@@ -453,17 +453,20 @@ class multisearch
 		# Get the search clauses
 		$singleSearchTerm = false;
 		if ($isSimpleSearch) {
-			$searchClauses = $this->searchClausesSimple ($result, $fields);
-			$searchClausesSql = implode (' OR ', $searchClauses);
+			$searchClausesSqlResult = $this->searchClausesSqlSimple ($result, $fields);
 			$singleSearchTerm = $result['search'];
 		} else {
-			$searchClauses = $this->searchClausesAdvanced ($result, $fields);
-			$searchClausesSql = implode (' AND ', $searchClauses);
+			$searchClausesSqlResult = $this->searchClausesSqlAdvanced ($result, $fields, $errorHtml);
+			if (!$searchClausesSqlResult) {
+				$html = $errorHtml;
+				return $html;
+			}
 			if (count ($result) == 1) {
 				$singleSearchTerms = array_values ($result);
 				$singleSearchTerm = $singleSearchTerms[0];
 			}
 		}
+		list ($searchClausesSql, $preparedStatementValues) = $searchClausesSqlResult;
 		
 		# Construct the query
 		$datasource = "{$this->settings['database']}.{$this->settings['table']}";
@@ -483,7 +486,7 @@ class multisearch
 				}
 				
 				# Get the data
-				$data = $this->databaseConnection->getData ($query, false, true, array (), $this->settings['showFields']);
+				$data = $this->databaseConnection->getData ($query, false, true, $preparedStatementValues, $this->settings['showFields']);
 				
 				# Modify the data (e.g. excluding fields, swapping codings, etc.)
 				$data = $this->modifyResults ($data);
@@ -502,7 +505,7 @@ class multisearch
 		}
 		
 		# Get the data via pagination
-		list ($data, $totalAvailable, $totalPages, $page, $actualMatchesReachedMaximum) = $this->databaseConnection->getDataViaPagination ($query, "{$this->settings['database']}.{$this->settings['table']}", true, array (), $this->settings['showFields'], $this->settings['paginationRecordsPerPage'], $page, $this->settings['searchResultsMaximumLimit']);
+		list ($data, $totalAvailable, $totalPages, $page, $actualMatchesReachedMaximum) = $this->databaseConnection->getDataViaPagination ($query, "{$this->settings['database']}.{$this->settings['table']}", true, $preparedStatementValues, $this->settings['showFields'], $this->settings['paginationRecordsPerPage'], $page, $this->settings['searchResultsMaximumLimit']);
 		
 		# Define text for a single search term
 		$singleSearchTermHtml = ($singleSearchTerm ? ' matching <em>' . htmlspecialchars ($singleSearchTerm) . '</em>' : '');
@@ -628,28 +631,34 @@ class multisearch
 	}
 	
 	
-	# Function to get the search clauses - simple search
-	private function searchClausesSimple ($result, $fields)
+	# Function to get the search clauses SQL - simple search
+	private function searchClausesSqlSimple ($result, $fields)
 	{
 		# Get the search term
 		$term = $result['search'];
 		
-		# Start a list of clauses, which will search only through specific fields
+		# Start a list of clauses and prepared statement values, which will search only through specific fields
 		$searchClauses = array ();
+		$preparedStatementValues = array ();
 		
 		# For ID, require an exact match
-		$searchClauses[$this->settings['keyField']] = $this->settings['keyField']  . ' = ' . $this->databaseConnection->quote ($term);
+		$searchClauses[$this->settings['keyField']] = $this->settings['keyField']  . ' = ?';
+		$preparedStatementValues[] = $term;
 		
 		# For subject, make the result sticky to word boundaries, but do not support * wildcards
-		$searchClauses[$this->settings['mainSubjectField']] = $this->textSearchClauseRespectingWordBoundaries ($this->settings['mainSubjectField'], $term, false);
+		$searchClauses[$this->settings['mainSubjectField']] = "{$this->settings['mainSubjectField']} REGEXP ?";
+		$preparedStatementValues[] = $this->textSearchTermRespectingWordBoundaries ($term, false);
 		
-		# Return the clauses array
-		return $searchClauses;
+		# Compile to SQL
+		$searchClausesSql = implode (' OR ', $searchClauses);
+		
+		# Return the SQL string and the prepared statement values
+		return array ($searchClausesSql, $preparedStatementValues);
 	}
 	
 	
 	# Function to get the search clauses - advanced search
-	private function searchClausesAdvanced ($result, $fields)
+	private function searchClausesSqlAdvanced ($result, $fields, &$errorHtml = '')
 	{
 		# Filter to supported fields only
 		foreach ($result as $key => $value) {
@@ -660,18 +669,20 @@ class multisearch
 		
 		# End if no approved search parameters
 		if (!$result) {
-			$html  = "\n<p>No valid search parameters were supplied. Please <a href=\"{$this->baseUrl}\">try a new search</a>.</p>";
-			return $html;
+			$errorHtml = "\n<p>No valid search parameters were supplied. Please <a href=\"{$this->baseUrl}\">try a new search</a>.</p>";
+			return false;
 		}
 		
 		# Determine the appropriate search strategy for each field
 		$searchClauses = array ();
+		$preparedStatementValues = array ();
 		foreach ($result as $key => $value) {
 			
 			# For the special-case of the main key field, require a direct match, but support *
 			if ($key == $this->settings['keyField']) {
 				$value = str_replace ('*', '%', $value);	// Replace \* (which was originally *) with (.+)
-				$searchClauses[$key] = "{$key} LIKE " . $this->databaseConnection->quote ($value);
+				$searchClauses[$key] = "{$key} LIKE ?";
+				$preparedStatementValues[] = $value;
 				continue;	// Skip to next, rather than running the switch
 			}
 			
@@ -680,16 +691,19 @@ class multisearch
 				
 				case 'string':
 				case 'text':
-					$searchClauses[$key] = $this->textSearchClauseRespectingWordBoundaries ($key, $value, true);
+					$searchClauses[$key] = "{$key} REGEXP ?";
+					$preparedStatementValues[] = $this->textSearchTermRespectingWordBoundaries ($value, true);
 					break;
 					
 				case 'numeric':
 				case 'date':
-					$searchClauses[$key] = "{$key} = " . $this->databaseConnection->quote ($value);
+					$searchClauses[$key] = "{$key} = ?";
+					$preparedStatementValues[] = $value;
 					break;
 					
 				case 'list':
-					$searchClauses[$key] = "{$key} = " . $this->databaseConnection->quote ($value);
+					$searchClauses[$key] = "{$key} = ?";
+					$preparedStatementValues[] = $value;
 					break;
 					
 				case 'point':
@@ -706,8 +720,11 @@ class multisearch
 			}
 		}
 		
-		# Return the search clauses
-		return $searchClauses;
+		# Compile to SQL
+		$searchClausesSql = implode (' AND ', $searchClauses);
+		
+		# Return the SQL string and the prepared statement values
+		return array ($searchClausesSql, $preparedStatementValues);
 	}
 	
 	
@@ -756,7 +773,7 @@ class multisearch
 		}
 		$coordinatesString = implode (',', $coordinateGroups);
 		
-		# Ensure the string contains only valid characters, to thwart SQL injection attacks
+		# Ensure the string contains only valid characters, to prevent SQL injection attacks
 		if (!preg_match ('/^([- .,0-9]+)$/', $coordinatesString)) {return false;}
 		
 		# Compile the Geom string
@@ -768,24 +785,26 @@ class multisearch
 	
 	
 	# Function to provide a text search clause which is sticky to word boundaries
-	private function textSearchClauseRespectingWordBoundaries ($fieldname, $term, $supportWildcard = false)
+	private function textSearchTermRespectingWordBoundaries ($term, $supportWildcard = false)
 	{
-		# Ensure that the user cannot specify a regexp as such
+		# Ensure that the user cannot specify a regexp as such, but prepare it to be a regexp for the search purposes
 		$term = preg_quote ($term);
 		
-		# If wildcards are supported, replace \* (which was originally *) with (.+)
+		# If wildcards are supported, replace \* (which was originally *) with (.*)
 		if ($supportWildcard) {
 			$term = str_replace ('\\*', '(.*)', $term);
+		}
+		
+		# For MySQL, if the string includes a backslash, turn \ into \\ because, in the REGEXP context, MySQL needs a double backslash as the escaper, which can be verified using " SELECT '|' REGEXP  '\\|'; ". See http://bugs.mysql.com/bug.php?id=399 and http://dev.mysql.com/doc/refman/5.5/en/regexp.html which says "you must double any “\” that you use in your REGEXP strings"
+		if ($this->databaseConnection->vendor == 'mysql') {
+			$term = str_replace ('\\', '\\\\', $term);	// Each is doubled here due to PHP escaping
 		}
 		
 		# Apply word boundary markers
 		$term = '[[:<:]]' . $term . '[[:>:]]';
 		
-		# Compile the clause, using REGEXP, not LIKE, so that word boundaries are supported, and quote the text
-		$clause = "{$fieldname} REGEXP " . $this->databaseConnection->quote ($term);
-		
-		# Return the compiled clause
-		return $clause;
+		# Return the compiled term
+		return $term;
 	}
 }
 
