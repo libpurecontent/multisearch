@@ -1,6 +1,6 @@
 <?php
 
-# Version 1.1.0
+# Version 1.1.1
 
 
 # Class to create a search page supporting simple search and advanced search
@@ -26,6 +26,7 @@ class multisearch
 		'enumRadiobuttons'					=> 1,
 		'enumRadiobuttonsInitialNullText'	=> array (),	// e.g. array ('foo' => 'Either') which would put "Either" as the empty enum text at the start of widget 'foo'
 		'searchResultsMaximumLimit'			=> false,
+		'searchPageInQueryString'			=> false,	// Whether, for the search, to put the page number in the query string
 		'geographicSearchEnabled'			=> false,		// Enables GeoJSON binding - specify the fieldname in POST, or false to disable
 		'geographicSearchMapUrl'			=> '/?mode=draw',
 		'geographicSearchField'				=> 'geometry',	// Spatial database field for location search
@@ -517,7 +518,7 @@ class multisearch
 			
 			# Show the count
 			$total = count ($data);
-			$html .= "\n<p>There " . ($totalAvailable == 1 ? 'is <strong>one</strong> item' : ($actualMatchesReachedMaximum ? 'are <strong>' . number_format ($actualMatchesReachedMaximum) . "</strong> items{$singleSearchTermHtml} <strong>but</strong> a maximum of <strong>" . number_format ($totalAvailable) . "</strong> can be shown in a search (so you may wish to refine your search below).<br />" : "are <strong>{$totalAvailable}</strong> items{$singleSearchTermHtml}. ")) . ($totalPages == 1 ? '' : "Showing {$this->settings['paginationRecordsPerPage']} records per page.") . '</p>';
+			$html .= "\n<p>There " . ($totalAvailable == 1 ? 'is <strong>one</strong> item:' : ($actualMatchesReachedMaximum ? 'are <strong>' . number_format ($actualMatchesReachedMaximum) . "</strong> items{$singleSearchTermHtml} <strong>but</strong> a maximum of <strong>" . number_format ($totalAvailable) . "</strong> can be shown in a search (so you may wish to refine your search below).<br />" : "are <strong>{$totalAvailable}</strong> items{$singleSearchTermHtml}. ")) . ($totalPages == 1 ? '' : "Showing {$this->settings['paginationRecordsPerPage']} records per page.") . '</p>';
 			
 			# Modify the data (e.g. excluding fields, swapping codings, etc.)
 			$data = $this->modifyResults ($data);
@@ -563,7 +564,8 @@ class multisearch
 		# Create the table, starting with pagination
 		if ($data) {
 			$queryStringComplete = http_build_query ($result);
-			$paginationLinks = application::paginationLinks ($page, $totalPages, $this->baseUrl, $queryStringComplete);
+			require_once ('pagination.php');
+			$paginationLinks = pagination::paginationLinks ($page, $totalPages, $this->baseUrl, $queryStringComplete, 'paginationlinks', $this->settings['searchPageInQueryString']);
 			if ($this->settings['exportingEnabled']) {
 				$html .= "\n<p class=\"" . ($paginationLinks ? 'right' : 'alignright') . "\"><a href=\"{$this->baseUrl}results.csv?" . htmlspecialchars ($queryStringComplete) . '"><img src="/images/fileicons/csv.gif" alt="" width="16" height="16" border="0" /> Export all to CSV (Excel)</a>' . ($paginationLinks ? ' <abbr title="This will export the full set of results for this search, not just the paginated subset below' . ($actualMatchesReachedMaximum ? ', subject to the maximum of ' . number_format ($totalAvailable) . ' items' : '') . '.">[?]</abbr>' : '') . '</p>';
 			}
