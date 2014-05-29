@@ -1,6 +1,6 @@
 <?php
 
-# Version 1.1.1
+# Version 1.1.2
 
 
 # Class to create a search page supporting simple search and advanced search
@@ -264,52 +264,63 @@ class multisearch
 	
 	
 	# Function to provide a search form that handles GeoJSON format
+	#!# "return true" for bailout condition is confusing here
 	private function searchFormByLocation ()
 	{
-		# Retrieve the data if submitted
+		# Retrieve the data if submitted, or end
 		$fieldname = $this->settings['geographicSearchEnabled'];
-		if (isSet ($_POST[$fieldname])) {
+		if (!isSet ($_POST[$fieldname])) {return true;}
+		
+		# Decode the JSON to an array, or end
+		if (!$jsonArray = json_decode ($_POST[$fieldname], true)) {return true;}
+		
+		# Locate the geometry by determining the GeoJSON type; see: http://geojson.org/geojson-spec.html#geojson-objects
+		if (!isSet ($jsonArray['type'])) {return true;}
+		switch ($jsonArray['type']) {
 			
-			# Decode the JSON to an array
-			$jsonArray = json_decode ($_POST[$fieldname], true);
-			
-			# Check the structure, that it is a Polygon, and retrieve the co-ordinates portion only
-			$coordinatesSet = false;
-			if ($jsonArray) {
-				if (isSet ($jsonArray['geometry'])) {
-					if (isSet ($jsonArray['geometry']['type'])) {
-						if ($jsonArray['geometry']['type'] == 'Polygon') {	// Currently support only Polygon type
-							if (isSet ($jsonArray['geometry']['coordinates'])) {
-								if (isSet ($jsonArray['geometry']['coordinates'][0])) {
-									if (is_array ($jsonArray['geometry']['coordinates'][0])) {
-										$coordinatesSet = $jsonArray['geometry']['coordinates'][0];
-									}
-								}
-							}
+			# FeatureCollection: http://geojson.org/geojson-spec.html#feature-collection-objects
+			case 'FeatureCollection':
+				if (!isSet ($jsonArray['features']) || !isSet ($jsonArray['features'][0]) || !isSet ($jsonArray['features'][0]['geometry'])) {return true;}
+				$geometry = $jsonArray['features'][0]['geometry'];
+				break;
+				
+			# Feature: http://geojson.org/geojson-spec.html#feature-objects
+			case 'Feature':
+				if (!isSet ($jsonArray['geometry'])) {return true;}
+				$geometry = $jsonArray['geometry'];
+				break;
+				
+			#!# Could add support for more types
+		}
+		
+		# Check the structure, that it is a Polygon, and retrieve the co-ordinates portion only
+		$coordinatesSet = false;
+		if (isSet ($geometry['type'])) {
+			if ($geometry['type'] == 'Polygon') {	// Currently support only Polygon type
+				if (isSet ($geometry['coordinates'])) {
+					if (isSet ($geometry['coordinates'][0])) {
+						if (is_array ($geometry['coordinates'][0])) {
+							$coordinatesSet = $geometry['coordinates'][0];
 						}
 					}
 				}
 			}
-			
-			# If there co-ordinates, convert back to JSON and use in the query
-			if ($coordinatesSet) {
-				
-				# Encode as lon1,lat1|lon2,lat2|...
-				$coordinatesJson = json_encode ($coordinatesSet);	// e.g. a string like [[3.0009179687488,53.540743120766],[2.8141503906209,52.743387092624],[2.0670800781271,52.616835414769]]
-				
-				# Convert an associative result
-				$databaseField = $this->settings['geographicSearchField'];
-				$result = array ($databaseField => $coordinatesJson);
-				
-				# Redirect so that the search parameters can be persistent
-				$url = $this->queryToUrl ($result);
-				application::sendHeader (302, $url);
-				return false;
-			}
 		}
 		
-		# Return return
-		return true;
+		# End if no co-ordinates
+		if (!$coordinatesSet) {return true;}
+		
+		# Convert into simple JSON and use in the query, by encoding as lon1,lat1|lon2,lat2|...
+		$coordinatesJson = json_encode ($coordinatesSet);	// e.g. a string like [[3.0009179687488,53.540743120766],[2.8141503906209,52.743387092624],[2.0670800781271,52.616835414769]]
+		
+		# Convert an associative result
+		$databaseField = $this->settings['geographicSearchField'];
+		$result = array ($databaseField => $coordinatesJson);
+		
+		# Redirect so that the search parameters can be persistent
+		$url = $this->queryToUrl ($result);
+		application::sendHeader (302, $url);
+		return false;
 	}
 	
 	
