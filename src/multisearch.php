@@ -1,6 +1,6 @@
 <?php
 
-# Version 1.1.2
+# Version 1.1.3
 
 
 # Class to create a search page supporting simple search and advanced search
@@ -557,7 +557,7 @@ class multisearch
 		# Provide a link to search again, with the form present but initially hidden
 		$html .= '
 			<!-- http://docs.jquery.com/Effects/toggle -->
-			<script src="http://code.jquery.com/jquery-latest.js"></script>
+			<script src="//code.jquery.com/jquery-latest.js"></script>
 			<script>
 				$(document).ready(function(){
 					$("a#showform").click(function () {
