@@ -1,6 +1,6 @@
 <?php
 
-# Version 1.1.3
+# Version 1.1.4
 
 
 # Class to create a search page supporting simple search and advanced search
@@ -39,6 +39,7 @@ class multisearch
 		'headingLevel'						=> 2,
 		'resultsContainerClass'				=> 'boxed',
 		'resultRenderer'					=> false,	// Result renderer, as a callable function, i.e. array(class,method)
+		'fixedConstraintSql'				=> false,	// Fixed constraint, e.g. 'private IS NOT NULL', which will be added as an overriding AND clause
 	);
 	
 	
@@ -435,55 +436,67 @@ class multisearch
 	
 	
 	# Function to do the search
-	private function searchResult ($result, $fields, $geometry)
+	private function searchResult ($get, $fields, $geometry)
 	{
 		# Start the HTML
 		$html  = '';
 		
 		# Cache and clear out output format details if set
 		$exportFormat = false;
-		if (isSet ($result['exportformat'])) {
-			$exportFormat = $result['exportformat'];
-			unset ($result['exportformat']);
+		if (isSet ($get['exportformat'])) {
+			$exportFormat = $get['exportformat'];
+			unset ($get['exportformat']);
 		}
 		
 		# Cache and clear out pagination details if set
 		$page = 1;
-		if (isSet ($result['page'])) {
-			$page = $result['page'];
-			unset ($result['page']);
+		if (isSet ($get['page'])) {
+			$page = $get['page'];
+			unset ($get['page']);
 		}
 		
 		# Determine if this is a simple search (i.e. an array as strictly array('search'=>value), compile the search phrases
 		$isSimpleSearch = false;
-		if ($result) {
-			$keys = array_keys ($result);
-			if ((count ($keys) == 2) && isSet ($result['search']) && isSet ($result['lonLat'])) {$isSimpleSearch = true;}
-			if ((count ($keys) == 1) && isSet ($result['search'])) {$isSimpleSearch = true;}
+		if ($get) {
+			$keys = array_keys ($get);
+			if ((count ($keys) == 2) && isSet ($get['search']) && isSet ($get['lonLat'])) {$isSimpleSearch = true;}
+			if ((count ($keys) == 1) && isSet ($get['search'])) {$isSimpleSearch = true;}
 		}
 		
 		# Get the search clauses
 		$singleSearchTerm = false;
 		if ($isSimpleSearch) {
-			$searchClausesSqlResult = $this->searchClausesSqlSimple ($result, $fields);
-			$singleSearchTerm = $result['search'];
+			$searchClausesSqlResult = $this->searchClausesSqlSimple ($get, $fields);
+			$singleSearchTerm = $get['search'];
 		} else {
-			$searchClausesSqlResult = $this->searchClausesSqlAdvanced ($result, $fields, $errorHtml);
+			$searchClausesSqlResult = $this->searchClausesSqlAdvanced ($get, $fields, $errorHtml);
 			if (!$searchClausesSqlResult) {
 				$html = $errorHtml;
 				return $html;
 			}
-			if (count ($result) == 1) {
-				$singleSearchTerms = array_values ($result);
+			if (count ($get) == 1) {
+				$singleSearchTerms = array_values ($get);
 				$singleSearchTerm = $singleSearchTerms[0];
 			}
 		}
 		list ($searchClausesSql, $preparedStatementValues) = $searchClausesSqlResult;
 		
+		# If there is a fixed constraint, add this in
+		if ($this->settings['fixedConstraintSql']) {
+			$searchClausesSql = "({$searchClausesSql}) AND {$this->settings['fixedConstraintSql']}";
+		}
+		
+/*
+if (isSet ($_SERVER['webmaster'])) {
+application::dumpData ($searchClausesSql);
+application::dumpData ($preparedStatementValues);
+}
+*/
+		
 		# Construct the query
 		$datasource = "{$this->settings['database']}.{$this->settings['table']}";
 		if ($geometry) {
-			$datasource = $this->geographicSearchDatasourceSubquery ($this->settings['geographicSearchField'], $result[$this->settings['geographicSearchField']]);
+			$datasource = $this->geographicSearchDatasourceSubquery ($this->settings['geographicSearchField'], $get[$this->settings['geographicSearchField']]);
 			$singleSearchTerm = false;
 		}
 		$query = "SELECT * FROM {$datasource} WHERE " . $searchClausesSql . " ORDER BY {$this->settings['orderBy']};";	// NB LIMIT may be attached below
@@ -569,12 +582,12 @@ class multisearch
 		';
 		$html .= "\n" . '<p><a id="showform" name="showform"><img src="/images/icons/pencil.png" alt="" border="0" /> <strong>Refine/filter this search</strong></a> if you wish.</p>';
 		$html .= "\n" . '<div id="searchform">';
-		$html .= $this->searchForm ($fields, $result, $isSimpleSearch, $geometry);
+		$html .= $this->searchForm ($fields, $get, $isSimpleSearch, $geometry);
 		$html .= "\n" . '</div>';
 		
 		# Create the table, starting with pagination
 		if ($data) {
-			$queryStringComplete = http_build_query ($result);
+			$queryStringComplete = http_build_query ($get);
 			require_once ('pagination.php');
 			$paginationLinks = pagination::paginationLinks ($page, $totalPages, $this->baseUrl, $queryStringComplete, 'paginationlinks', $this->settings['searchPageInQueryString']);
 			if ($this->settings['exportingEnabled']) {
