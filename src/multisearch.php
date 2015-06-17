@@ -1,6 +1,6 @@
 <?php
 
-# Version 1.1.4
+# Version 1.1.5
 
 
 # Class to create a search page supporting simple search and advanced search
@@ -486,13 +486,6 @@ class multisearch
 			$searchClausesSql = "({$searchClausesSql}) AND {$this->settings['fixedConstraintSql']}";
 		}
 		
-/*
-if (isSet ($_SERVER['webmaster'])) {
-application::dumpData ($searchClausesSql);
-application::dumpData ($preparedStatementValues);
-}
-*/
-		
 		# Construct the query
 		$datasource = "{$this->settings['database']}.{$this->settings['table']}";
 		if ($geometry) {
@@ -821,13 +814,21 @@ application::dumpData ($preparedStatementValues);
 			$term = str_replace ('\\*', '(.*)', $term);
 		}
 		
-		# For MySQL, if the string includes a backslash, turn \ into \\ because, in the REGEXP context, MySQL needs a double backslash as the escaper, which can be verified using " SELECT '|' REGEXP  '\\|'; ". See http://bugs.mysql.com/bug.php?id=399 and http://dev.mysql.com/doc/refman/5.5/en/regexp.html which says "you must double any “\” that you use in your REGEXP strings"
+		/*
+			This block is removed as it appears this is not necessary in a prepared statement context:
+			* "PreparedStatements do any (necessary) mysql-style escaping on your behalf before sending it to the backend." https://bugs.mysql.com/bug.php?id=33302
+			* "If you use MySQLi or PDO prepared statements instead of building your SQL statements yourself, MySQL will let you save values entirely unchanged without having to ever escape anything." http://stackoverflow.com/questions/14795811/
+		
+		# For MySQL, if the string includes a backslash, turn \ into \\ because, in the REGEXP context, MySQL needs a double backslash as the escaper, which can be verified using " SELECT '|' REGEXP  '\\|'; ".
+		# See http://bugs.mysql.com/bug.php?id=399 and http://dev.mysql.com/doc/refman/5.5/en/regexp.html which says 'you must double any "\" that you use in your REGEXP strings'
 		if ($this->databaseConnection->vendor == 'mysql') {
 			$term = str_replace ('\\', '\\\\', $term);	// Each is doubled here due to PHP escaping
 		}
+		*/
 		
 		# Apply word boundary markers
-		$term = '[[:<:]]' . $term . '[[:>:]]';
+		//$term = '[[:<:]]' . $term . '[[:>:]]';
+		$term = '(^|[^a-zA-Z0-9_])' . $term . '($|[^a-zA-Z0-9_])';	// http://stackoverflow.com/a/18550071/180733
 		
 		# Return the compiled term
 		return $term;
