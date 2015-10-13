@@ -1,6 +1,6 @@
 <?php
 
-# Version 1.2.0
+# Version 1.2.1
 
 
 # Class to create a search page supporting simple search and advanced search
@@ -19,9 +19,10 @@ class multisearch
 		'enableSimpleSearch'				=> true,
 		'mainSubjectField'					=> NULL,
 		'excludeFields'						=> array (),	// Fields should not appear in the search form or the search results table
+		'includeOnly'						=> array (),	// Alternatively, the only fields that should appear in the search form
 		'showFields'						=> NULL,
 		'ignoreKeys'						=> array (),	// Defined query string parameters to ignore, e.g. values from a surrounding application's query string
-		'recordLink'						=> NULL,
+		'recordLink'						=> NULL,		// Link format which modifies the id field in the results, or (bool) false to disable
 		'paginationRecordsPerPage'			=> 50,
 		'enumRadiobuttons'					=> 1,
 		'enumRadiobuttonsInitialNullText'	=> array (),	// e.g. array ('foo' => 'Either') which would put "Either" as the empty enum text at the start of widget 'foo'
@@ -37,7 +38,7 @@ class multisearch
 		'exportingFieldLabels'				=> false,	// Whether to use field labels if available rather than the field names when exporting
 		'codings'							=> false,	// Codings (lookups of data in the table)
 		'jQueryLoaded'						=> false,	// Whether jQuery has already been loaded
-		'headingLevel'						=> 2,
+		'headingLevel'						=> 2,		// Or false to disable
 		'resultsContainerClass'				=> 'boxed',
 		'resultRenderer'					=> false,	// Result renderer, as a callable function, i.e. array(class,method)
 		'fixedConstraintSql'				=> false,	// Fixed constraint, e.g. 'private IS NOT NULL', which will be added as an overriding AND clause
@@ -393,9 +394,11 @@ class multisearch
 			'database' => $this->settings['database'],
 			'table' => $this->settings['table'],
 			'exclude' => $this->settings['excludeFields'],
+			'includeOnly' => $this->settings['includeOnly'],
 			'attributes' => $dataBindingAttributes,
 			'enumRadiobuttons' => $this->settings['enumRadiobuttons'],
 			'enumRadiobuttonsInitialNullText' => $this->settings['enumRadiobuttonsInitialNullText'],
+			'textAsVarchar' => true,
 			'data' => $data,
 		);
 		
@@ -549,15 +552,17 @@ class multisearch
 				}
 			}
 			
-			# Create a link to the item
-			foreach ($data as $recordKey => $record) {
-				$recordLink = $this->settings['recordLink'];
-				foreach ($record as $key => $value) {
-					$recordLink = str_replace ("%lower({$key})", urlencode (strtolower ($value)), $recordLink);
-					$recordLink = str_replace ("%{$key}", urlencode ($value), $recordLink);
+			# Create a link to the item if required
+			if ($this->settings['recordLink']) {
+				foreach ($data as $recordKey => $record) {
+					$recordLink = $this->settings['recordLink'];
+					foreach ($record as $key => $value) {
+						$recordLink = str_replace ("%lower({$key})", urlencode (strtolower ($value)), $recordLink);
+						$recordLink = str_replace ("%{$key}", urlencode ($value), $recordLink);
+					}
+					$recordLink = htmlspecialchars ($recordLink);
+					$data[$recordKey][$this->settings['keyField']] = "<a href=\"{$recordLink}\">" . $record[$this->settings['keyField']] . '</a>';
 				}
-				$recordLink = htmlspecialchars ($recordLink);
-				$data[$recordKey][$this->settings['keyField']] = "<a href=\"{$recordLink}\">" . $record[$this->settings['keyField']] . '</a>';
 			}
 		}
 		
@@ -627,6 +632,7 @@ class multisearch
 	private function modifyResults ($data)
 	{
 		# Exclude fields if required
+		#!# This block is overriding showFields which already has to be set - consider removal
 		if ($this->settings['excludeFields']) {
 			foreach ($data as $recordKey => $record) {
 				foreach ($record as $key => $value) {
