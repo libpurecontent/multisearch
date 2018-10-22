@@ -1,6 +1,6 @@
 <?php
 
-# Version 1.2.1
+# Version 1.2.2
 
 
 # Class to create a search page supporting simple search and advanced search
@@ -312,6 +312,13 @@ class multisearch
 		
 		# End if no co-ordinates
 		if (!$coordinatesSet) {return true;}
+		
+		# Round floats to six figures for shorter URLs
+		foreach ($coordinatesSet as $index => $coordinates) {
+			foreach ($coordinates as $indexInner => $coordinate) {
+				$coordinatesSet[$index][$indexInner] = round ($coordinate, 6);
+			}
+		}
 		
 		# Convert into simple JSON and use in the query, by encoding as lon1,lat1|lon2,lat2|...
 		$coordinatesJson = json_encode ($coordinatesSet);	// e.g. a string like [[3.0009179687488,53.540743120766],[2.8141503906209,52.743387092624],[2.0670800781271,52.616835414769]]
@@ -811,7 +818,7 @@ class multisearch
 		if (!preg_match ('/^([- .,0-9]+)$/', $coordinatesString)) {return false;}
 		
 		# Compile the Geom string
-		$geomString = "GeomFromText('Polygon((" . $coordinatesString . "))')";
+		$geomString = "ST_GeomFromText('Polygon((" . $coordinatesString . "))')";
 		
 		# Return the string
 		return $geomString;
