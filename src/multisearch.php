@@ -1,6 +1,6 @@
 <?php
 
-# Version 1.2.2
+# Version 1.2.3
 
 
 # Class to create a search page supporting simple search and advanced search
@@ -31,8 +31,7 @@ class multisearch
 		'geographicSearchEnabled'			=> false,		// Enables GeoJSON binding - specify the fieldname in POST, or false to disable
 		'geographicSearchMapUrl'			=> '/?mode=draw',
 		'geographicSearchField'				=> 'geometry',	// Spatial database field for location search
-		'geographicSearchTrueWithin'		=> false,	// If the fallback trueWithin function is available in SQL
-		'geographicSearchLegacyMBRWithin'	=> false,	// Whether to use the legacy MBRWithin SQL function rather than 
+		'geographicSearchLegacyMBRWithin'	=> false,	// Whether to use the legacy MBRWithin SQL function rather than proper ST_Within
 		// 'queryArgSeparator'				=> ',',
 		'exportingEnabled'					=> true,	// Whether CSV export is enabled
 		'exportingFieldLabels'				=> false,	// Whether to use field labels if available rather than the field names when exporting
@@ -498,12 +497,10 @@ class multisearch
 		}
 		
 		# Construct the query
-		$datasource = "{$this->settings['database']}.{$this->settings['table']}";
 		if ($geometry) {
-			$datasource = $this->geographicSearchDatasourceSubquery ($this->settings['geographicSearchField'], $get[$this->settings['geographicSearchField']]);
 			$singleSearchTerm = false;
 		}
-		$query = "SELECT * FROM {$datasource} WHERE " . $searchClausesSql . " ORDER BY {$this->settings['orderBy']};";	// NB LIMIT may be attached below
+		$query = "SELECT * FROM {$this->settings['database']}.{$this->settings['table']} WHERE " . $searchClausesSql . " ORDER BY {$this->settings['orderBy']};";	// NB LIMIT may be attached below
 		
 		# Export if required
 		if ($this->settings['exportingEnabled']) {
@@ -745,12 +742,7 @@ class multisearch
 					if ($geom = $this->jsonPolygonToGeom ($value)) {
 						$searchClauses[$key] = "ST_Within({$key}, " . $geom . ')';
 						
-						# Legacy option for the trueWithin routine, for MySQL <5.6.1
-						if ($this->settings['geographicSearchTrueWithin']) {	// Note also the geographicSearchDatasourceSubquery() to prefilter the dataset first
-							$searchClauses[$key] = "trueWithin({$key}, " . $geom . ')';		// See trueWithin in within.sql from CycleStreets codebase
-						}
-						
-						# Fallback legacy option for MBRWithin, for MySQL <5.6.1 when trueWithin not available
+						# Fallback legacy option for MBRWithin, for MySQL <5.6.1 when ST_Within not available
 						if ($this->settings['geographicSearchLegacyMBRWithin']) {
 							$searchClauses[$key] = "MBRWithin({$key}, " . $geom . ")";	// See http://dev.mysql.com/doc/refman/5.5/en/spatial-relation-functions-mysql-specific.html
 						}
@@ -766,38 +758,6 @@ class multisearch
 		
 		# Return the SQL string and the prepared statement values
 		return array ($searchClausesSql, $preparedStatementValues);
-	}
-	
-	
-	# Function to provide a subquery for geographic search
-	private function geographicSearchDatasourceSubquery ($key, $value)
-	{
-		# Optimise based on the database vendor
-		switch ($this->databaseConnection->vendor) {
-			
-			// MySQL has poor MBRWithin() support, so we use a subquery to cut down the initial table size to a smaller bounding box first
-			case 'mysql':
-				if ($this->settings['geographicSearchTrueWithin']) {	// Only enable if native ST_Within support not available
-					if ($geom = $this->jsonPolygonToGeom ($value)) {
-						$table = "(
-							SELECT
-							*
-							FROM {$this->settings['database']}.{$this->settings['table']}
-							WHERE MBRWithin({$key}, " . $geom . ")
-						) AS mbrPrefiltered";
-						return $table;
-					}
-				}
-				break;
-				
-			// PostgreSQL not yet determined - probably won't need any optimisation
-			default:
-				break;
-		}
-		
-		# Fallback is to return the standard table setting
-		$default = "{$this->settings['database']}.{$this->settings['table']}";
-		return $default;
 	}
 	
 	
