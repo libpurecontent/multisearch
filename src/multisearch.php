@@ -1,6 +1,6 @@
 <?php
 
-# Version 1.2.3
+# Version 1.2.4
 
 
 # Class to create a search page supporting simple search and advanced search
@@ -41,6 +41,7 @@ class multisearch
 		'resultsContainerClass'				=> 'boxed',
 		'resultRenderer'					=> false,	// Result renderer, as a callable function, i.e. array(class,method)
 		'fixedConstraintSql'				=> false,	// Fixed constraint, e.g. 'private IS NOT NULL', which will be added as an overriding AND clause
+		'tabsClass'							=> 'tabs',	// Tabs CSS class
 	);
 	
 	
@@ -172,7 +173,7 @@ class multisearch
 			# Load into tabs
 			require_once ('jquery.php');
 			$jQuery = new jQuery (false, false, false, $this->settings['jQueryLoaded']);
-			$jQuery->tabs ($labels, $forms, $switchToTabNumber = '0', false, $this->settings['resultsContainerClass']);
+			$jQuery->tabs ($labels, $forms, $switchToTabNumber = '0', false, $this->settings['resultsContainerClass'], $this->settings['tabsClass']);
 			$html  = $jQuery->getHtml ();
 		}
 		
@@ -543,7 +544,10 @@ class multisearch
 			
 			# Show the count
 			$total = count ($data);
-			$html .= "\n<p>There " . ($totalAvailable == 1 ? 'is <strong>one</strong> item:' : ($actualMatchesReachedMaximum ? 'are <strong>' . number_format ($actualMatchesReachedMaximum) . "</strong> items{$singleSearchTermHtml} <strong>but</strong> a maximum of <strong>" . number_format ($totalAvailable) . "</strong> can be shown in a search (so you may wish to refine your search below).<br />" : "are <strong>{$totalAvailable}</strong> items{$singleSearchTermHtml}. ")) . ($totalPages == 1 ? '' : "Showing {$this->settings['paginationRecordsPerPage']} records per page.") . '</p>';
+			$html .= "\n<p>";
+			$html .= "There " . ($totalAvailable == 1 ? 'is <strong>one</strong> item:' : ($actualMatchesReachedMaximum ? 'are <strong>' . number_format ($actualMatchesReachedMaximum) . "</strong> items{$singleSearchTermHtml} <strong>but</strong> a maximum of <strong>" . number_format ($totalAvailable) . "</strong> can be shown in a search (so you may wish to refine your search below).<br />" : 'are <strong>' . number_format ($totalAvailable) . "</strong> items{$singleSearchTermHtml}. "));
+			$html .= ($totalPages == 1 ? '' : "Showing {$this->settings['paginationRecordsPerPage']} records per page.");
+			$html .= '</p>';
 			
 			# Modify the data (e.g. excluding fields, swapping codings, etc.)
 			$data = $this->modifyResults ($data);
@@ -585,7 +589,7 @@ class multisearch
 			</script>
 			<style type="text/css">#searchform {display: none;}</style>
 		';
-		$html .= "\n" . '<p><a id="showform" name="showform"><img src="/images/icons/pencil.png" alt="" border="0" /> <strong>Refine/filter this search</strong></a> if you wish.</p>';
+		$html .= "\n" . '<p><a id="showform" name="showform" style="cursor: pointer;"><img src="/images/icons/pencil.png" alt="" border="0" /> <strong>Refine/filter this search</strong></a> if you wish.</p>';
 		$html .= "\n" . '<div id="searchform">';
 		$html .= $this->searchForm ($fields, $get, $isSimpleSearch, $geometry);
 		$html .= "\n" . '</div>';
