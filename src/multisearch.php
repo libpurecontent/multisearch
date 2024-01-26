@@ -1,8 +1,5 @@
 <?php
 
-# Version 1.2.4
-
-
 # Class to create a search page supporting simple search and advanced search
 class multisearch
 {
@@ -54,12 +51,6 @@ class multisearch
 	# Search functionality
 	public function __construct ($settings)
 	{
-		# Load required libraries
-		require_once ('application.php');
-		require_once ('database.php');
-		//require_once ('jquery.php');	// Added below
-		require_once ('ultimateForm.php');
-		
 		# Merge in the arguments; note that $errors returns the errors by reference and not as a result from the method
 		if (!$this->settings = application::assignArguments ($errors, $settings, $this->defaults, __CLASS__, NULL, $handleErrors = true)) {
 			return false;
@@ -171,7 +162,6 @@ class multisearch
 			);
 			
 			# Load into tabs
-			require_once ('jquery.php');
 			$jQuery = new jQuery (false, false, false, $this->settings['jQueryLoaded']);
 			$jQuery->tabs ($labels, $forms, $switchToTabNumber = '0', false, $this->settings['resultsContainerClass'], $this->settings['tabsClass']);
 			$html  = $jQuery->getHtml ();
@@ -525,7 +515,6 @@ class multisearch
 				}
 				
 				# Serve as CSV
-				require_once ('csv.php');
 				csv::serve ($data, "{$this->settings['table']}_results", true, $headerLabels);
 				return true;
 			}
@@ -597,7 +586,6 @@ class multisearch
 		# Create the table, starting with pagination
 		if ($data) {
 			$queryStringComplete = http_build_query ($get);
-			require_once ('pagination.php');
 			$paginationLinks = pagination::paginationLinks ($page, $totalPages, $this->baseUrl, $queryStringComplete, 'paginationlinks', $this->settings['searchPageInQueryString']);
 			if ($this->settings['exportingEnabled']) {
 				$html .= "\n<p class=\"" . ($paginationLinks ? 'right' : 'alignright') . "\"><a href=\"{$this->baseUrl}results.csv?" . htmlspecialchars ($queryStringComplete) . '"><img src="/images/fileicons/csv.gif" alt="" width="16" height="16" border="0" /> Export all to CSV (Excel)</a>' . ($paginationLinks ? ' <abbr title="This will export the full set of results for this search, not just the paginated subset below' . ($actualMatchesReachedMaximum ? ', subject to the maximum of ' . number_format ($totalAvailable) . ' items' : '') . '.">[?]</abbr>' : '') . '</p>';
