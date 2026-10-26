@@ -546,7 +546,7 @@ class multisearch
 			foreach ($data as $recordKey => $record) {
 				$id = $record[$this->settings['keyField']];
 				foreach ($record as $key => $value) {
-					$data[$recordKey][$key] = htmlspecialchars ($data[$recordKey][$key]);
+					$data[$recordKey][$key] = (!is_null ($data[$recordKey][$key]) ? htmlspecialchars ($data[$recordKey][$key]) : $data[$recordKey][$key]);
 				}
 			}
 			
