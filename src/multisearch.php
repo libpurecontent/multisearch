@@ -3,6 +3,13 @@
 # Class to create a search page supporting simple search and advanced search
 class multisearch
 {
+	# Class properties
+	private $settings = array ();
+	private $databaseConnection;
+	private $html = '';
+	private $baseUrl = '';
+	
+	
 	# Specify available arguments as defaults or as NULL (to represent a required argument)
 	var $defaults = array (
 		'databaseConnection'				=> NULL,
@@ -40,12 +47,6 @@ class multisearch
 		'fixedConstraintSql'				=> false,	// Fixed constraint, e.g. 'private IS NOT NULL', which will be added as an overriding AND clause
 		'tabsClass'							=> 'tabs',	// Tabs CSS class
 	);
-	
-	
-	# Class properties
-	private $settings = array ();
-	private $html = '';
-	private $baseUrl = '';
 	
 	
 	# Search functionality
