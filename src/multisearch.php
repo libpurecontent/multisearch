@@ -555,8 +555,10 @@ class multisearch
 				foreach ($data as $recordKey => $record) {
 					$recordLink = $this->settings['recordLink'];
 					foreach ($record as $key => $value) {
-						$recordLink = str_replace ("%lower({$key})", urlencode (strtolower ($value)), $recordLink);
-						$recordLink = str_replace ("%{$key}", urlencode ($value), $recordLink);
+						if ($value) {
+							$recordLink = str_replace ("%lower({$key})", urlencode (mb_strtolower ($value)), $recordLink);
+							$recordLink = str_replace ("%{$key}", urlencode ($value), $recordLink);
+						}
 					}
 					$recordLink = htmlspecialchars ($recordLink);
 					$data[$recordKey][$this->settings['keyField']] = "<a href=\"{$recordLink}\">" . $record[$this->settings['keyField']] . '</a>';
