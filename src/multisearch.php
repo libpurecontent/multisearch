@@ -217,6 +217,7 @@ class multisearch
 			'requiredFieldIndicator' => false,
 			// 'reappear' => true,
 			'name' => false,
+			'id' => 'multisearchsimple',
 			'submitTo' => $this->baseUrl,
 		));
 		
@@ -362,6 +363,7 @@ class multisearch
 			'formCompleteText' => false,
 			'databaseConnection' => $this->databaseConnection,
 			'name' => false,
+			'id' => 'multisearchadvanced',
 			// 'submitButtonPosition' => 'both',
 			'submitTo' => $this->baseUrl,
 			'nullText' => false,
